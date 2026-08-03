@@ -1,7 +1,11 @@
 from pathlib import Path
+from io import BytesIO
+
+import zxingcpp
+from PIL import Image
 
 from media_app.models import AlbumDraft, join_people, split_people
-from media_app.recognition import barcode_is_valid, normalize_barcode
+from media_app.recognition import barcode_from_image, barcode_is_valid, normalize_barcode
 from media_app.storage import add_album, delete_album, duplicate_candidates, initialize, list_albums, update_album
 
 
@@ -9,6 +13,16 @@ def test_barcode_helpers() -> None:
     assert normalize_barcode("4 988006-700802") == "4988006700802"
     assert barcode_is_valid("4988006700802")
     assert not barcode_is_valid("4988006700803")
+
+
+def test_barcode_from_photo_like_image() -> None:
+    barcode = zxingcpp.create_barcode("4988006700802", zxingcpp.BarcodeFormat.EAN13)
+    generated = Image.fromarray(zxingcpp.write_barcode_to_image(barcode, 500, True, True))
+    canvas = Image.new("RGB", (1200, 900), "#dedbd2")
+    canvas.paste(generated.convert("RGB"), (300, 280))
+    buffer = BytesIO()
+    canvas.save(buffer, format="JPEG", quality=82)
+    assert barcode_from_image(buffer.getvalue()) == "4988006700802"
 
 
 def test_people_helpers() -> None:

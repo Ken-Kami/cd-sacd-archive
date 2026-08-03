@@ -8,7 +8,7 @@ import re
 import requests
 import zxingcpp
 from openai import OpenAI
-from PIL import Image, ImageOps
+from PIL import Image, ImageFilter, ImageOps
 
 from media_app.models import AlbumDraft
 
@@ -31,12 +31,33 @@ def barcode_is_valid(value: str) -> bool:
 
 
 def barcode_from_image(image_bytes: bytes) -> str:
-    """写真内のJAN／UPC／EAN／ITFバーコードを読み取る。"""
-    image = ImageOps.exif_transpose(Image.open(io.BytesIO(image_bytes))).convert("RGB")
-    for result in zxingcpp.read_barcodes(image):
-        candidate = normalize_barcode(result.text)
-        if barcode_is_valid(candidate):
-            return candidate
+    """写真内のJAN／UPC／EAN／ITFを、補正条件を変えながら読み取る。"""
+    original = ImageOps.exif_transpose(Image.open(io.BytesIO(image_bytes))).convert("RGB")
+    # 小さく写ったバーコードの線幅を確保する。大画像はZXing側の縮小探索に任せる。
+    if max(original.size) < 1800:
+        scale = 1800 / max(original.size)
+        original = original.resize(
+            (round(original.width * scale), round(original.height * scale)),
+            Image.Resampling.LANCZOS,
+        )
+    gray = ImageOps.grayscale(original)
+    variants = (
+        original,
+        gray,
+        ImageOps.autocontrast(gray, cutoff=1),
+        ImageOps.autocontrast(gray, cutoff=2).filter(ImageFilter.SHARPEN),
+    )
+    for image in variants:
+        for result in zxingcpp.read_barcodes(
+            image,
+            try_rotate=True,
+            try_downscale=True,
+            return_errors=False,
+        ):
+            candidate = normalize_barcode(result.text)
+            # ZXingは既定でチェックサム不正の結果を返さない。GTINの再検証も行う。
+            if barcode_is_valid(candidate):
+                return candidate
     return ""
 
 
@@ -94,9 +115,18 @@ def extract_album_with_ai(images: list[tuple[bytes, str]]) -> AlbumDraft:
 
 def lookup_musicbrainz(barcode: str) -> AlbumDraft | None:
     normalized = normalize_barcode(barcode)
+    candidates = [normalized]
+    if len(normalized) == 12:
+        candidates.append(f"0{normalized}")
+    elif len(normalized) == 13 and normalized.startswith("0"):
+        candidates.append(normalized[1:])
     response = requests.get(
         "https://musicbrainz.org/ws/2/release/",
-        params={"query": f"barcode:{normalized}", "fmt": "json", "limit": "1"},
+        params={
+            "query": " OR ".join(f"barcode:{value}" for value in candidates),
+            "fmt": "json",
+            "limit": "1",
+        },
         headers={"User-Agent": "CDArchive/1.0 (personal collection manager)"},
         timeout=15,
     )

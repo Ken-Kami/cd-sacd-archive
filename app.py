@@ -103,6 +103,7 @@ def album_fields(prefix: str, draft: AlbumDraft) -> dict:
 
 st.title("💿 わたしの音盤棚")
 st.caption("CD・SACDを、見つけやすく、重複なく。国内盤も輸入盤もまとめて管理。")
+st.caption("アプリ版: 0.2.1（オンデマンド撮影・バーコード認識改善版）")
 tab_add, tab_shelf, tab_import, tab_settings = st.tabs(["音盤を登録", "音盤棚", "一括登録", "設定"])
 
 with tab_add:
@@ -115,17 +116,17 @@ with tab_add:
         )
         selected_files = []
         if mode in {"バーコード写真", "ジャケット画像（AI）"}:
-            st.info("カメラで撮影するか、写真ライブラリから選択してください。")
-            camera_image = st.camera_input("📷 カメラで撮影", key=f"camera_{mode}")
+            st.info("下のボタンを押したときだけ、カメラまたは写真ライブラリが開きます。")
             uploaded = st.file_uploader(
-                "写真ライブラリ／ファイルから選択",
+                "📷 撮影・写真を選択",
                 type=["jpg", "jpeg", "png", "webp"],
                 accept_multiple_files=mode == "ジャケット画像（AI）",
-                help="AI読取では表・裏・帯・盤面を最大4枚程度選ぶと精度が上がります。",
+                help=(
+                    "iPhoneでは『写真またはビデオを撮る』を選べます。"
+                    "AI読取では表・裏・帯・盤面を最大4枚程度選ぶと精度が上がります。"
+                ),
                 key=f"upload_{mode}",
             )
-            if camera_image:
-                selected_files.append(camera_image)
             if uploaded:
                 selected_files.extend(uploaded if isinstance(uploaded, list) else [uploaded])
             if selected_files:
