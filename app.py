@@ -41,14 +41,41 @@ if "draft" not in st.session_state:
     st.session_state.draft = AlbumDraft()
 if "draft_source" not in st.session_state:
     st.session_state.draft_source = "manual"
+if st.session_state.pop("reset_new_form", False):
+    st.session_state.draft = AlbumDraft()
+    st.session_state.draft_source = "manual"
+    for state_key in list(st.session_state):
+        if state_key.startswith("new_"):
+            del st.session_state[state_key]
 
 
 def set_draft(album: AlbumDraft, source: str) -> None:
     st.session_state.draft = album
     st.session_state.draft_source = source
-    for key in list(st.session_state):
-        if key.startswith("new_"):
-            del st.session_state[key]
+    # value= だけでは既存widgetの状態が優先されるため、各欄へ明示的に同期する。
+    widget_values = {
+        "new_title": album.title,
+        "new_title_original": album.title_original,
+        "new_artists": " ; ".join(album.artists),
+        "new_composers": " ; ".join(album.composers),
+        "new_performers": " ; ".join(album.performers),
+        "new_label": album.label,
+        "new_catalog": album.catalog_number,
+        "new_barcode": album.barcode,
+        "new_media": album.media_type,
+        "new_discs": album.disc_count,
+        "new_origin": album.origin,
+        "new_country": album.country,
+        "new_year": album.release_year,
+        "new_genre": album.genre if album.genre in GENRES else "",
+        "new_format": album.recording_format,
+        "new_location": album.location,
+        "new_purchase_date": album.purchase_date,
+        "new_price": album.purchase_price or 0,
+        "new_condition": album.condition,
+        "new_notes": album.notes,
+    }
+    st.session_state.update(widget_values)
 
 
 def album_from_row(row: dict) -> AlbumDraft:
@@ -103,7 +130,7 @@ def album_fields(prefix: str, draft: AlbumDraft) -> dict:
 
 st.title("💿 わたしの音盤棚")
 st.caption("CD・SACDを、見つけやすく、重複なく。国内盤も輸入盤もまとめて管理。")
-st.caption("アプリ版: 0.2.1（オンデマンド撮影・バーコード認識改善版）")
+st.caption("アプリ版: 0.2.2（読取結果のフォーム反映改善版）")
 tab_add, tab_shelf, tab_import, tab_settings = st.tabs(["音盤を登録", "音盤棚", "一括登録", "設定"])
 
 with tab_add:
@@ -114,6 +141,12 @@ with tab_add:
             "読み取り方法",
             ["バーコード写真", "ジャケット画像（AI）", "番号を入力", "手入力"],
         )
+        recognition = st.session_state.get("last_recognition")
+        if recognition:
+            if recognition["status"] == "success":
+                st.success(recognition["message"])
+            else:
+                st.warning(recognition["message"])
         selected_files = []
         if mode in {"バーコード写真", "ジャケット画像（AI）"}:
             st.info("下のボタンを押したときだけ、カメラまたは写真ライブラリが開きます。")
@@ -141,10 +174,30 @@ with tab_add:
                     if not barcode:
                         st.warning("バーコードを検出できませんでした。明るい場所で近づいて再撮影してください。")
                     else:
-                        with st.spinner("バーコードと音盤情報を確認中…"):
-                            found = lookup_musicbrainz(barcode)
+                        # 外部検索に失敗しても、読み取れたバーコードは必ずフォームへ残す。
+                        found = None
+                        lookup_error = ""
+                        try:
+                            with st.spinner("バーコードと音盤情報を確認中…"):
+                                found = lookup_musicbrainz(barcode)
+                        except Exception as exc:
+                            lookup_error = str(exc)
                         set_draft(found or AlbumDraft(barcode=barcode), "barcode-photo")
-                        st.success(f"バーコード {barcode} を読み取りました。右側で確認してください。")
+                        if found:
+                            st.session_state.last_recognition = {
+                                "status": "success",
+                                "message": f"バーコード {barcode} を読み取り、『{found.title}』の情報を右側へ反映しました。",
+                            }
+                        elif lookup_error:
+                            st.session_state.last_recognition = {
+                                "status": "warning",
+                                "message": f"バーコード {barcode} は読み取れました。外部検索に接続できないため、番号だけを右側へ反映しました。",
+                            }
+                        else:
+                            st.session_state.last_recognition = {
+                                "status": "warning",
+                                "message": f"バーコード {barcode} は読み取れましたが、MusicBrainzに該当情報がありません。番号を右側へ反映しました。",
+                            }
                         st.rerun()
                 except Exception as exc:
                     st.error(f"読み取りに失敗しました: {exc}")
@@ -209,7 +262,8 @@ with tab_add:
                     st.warning(f"同じバーコードまたは規格品番の登録が {len(duplicates)} 件あります。内容を確認してください。")
                 else:
                     add_album(album, st.session_state.draft_source)
-                    set_draft(AlbumDraft(), "manual")
+                    st.session_state.reset_new_form = True
+                    st.session_state.pop("last_recognition", None)
                     st.success("音盤棚に保存しました。")
                     st.rerun()
 
