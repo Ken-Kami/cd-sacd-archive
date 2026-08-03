@@ -1,0 +1,7 @@
+streamlit>=1.41,<2
+pandas>=2.2,<3
+requests>=2.32,<3
+pydantic>=2.10,<3
+Pillow>=10.4,<12
+zxing-cpp>=2.2,<3
+openai>=1.66,<3

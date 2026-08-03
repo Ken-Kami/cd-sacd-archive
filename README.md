@@ -1,0 +1,41 @@
+# わたしの音盤棚
+
+1000枚を超えるCD・SACDコレクションを、MacとiPhoneから管理するStreamlitアプリです。
+叢書管理アプリ「わたしの本棚」の操作体系を引き継いでいます。
+
+## 主な機能
+
+- CD、SACD、SACD Hybrid、Blu-ray Audioを登録
+- JAN／UPC／EANからMusicBrainzのメタデータを取得
+- iPhone／Macのカメラ写真からJAN・UPC・EANバーコードを読み取り
+- 表裏ジャケット・帯・盤面の複数画像からAIで音盤情報を抽出
+- 国内盤／輸入盤、規格品番、レーベル、演奏者、作曲家、保管場所などを記録
+- 全項目横断検索、盤種・出自・ジャンルで絞り込み
+- バーコード／規格品番による重複候補の検出
+- 登録後の全項目編集、削除、CSV入出力
+- 総タイトル数、総ディスク枚数、SACD数を集計
+
+## 起動
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+AI画像読取を使う場合は `.streamlit/secrets.toml`（Git管理対象外）へ設定します。
+
+```toml
+OPENAI_API_KEY = "sk-..."
+OPENAI_VISION_MODEL = "gpt-5.6-luna"
+```
+
+既定の保存先は `data/collection.db` です。iCloud Drive等を使う場合は次のように指定します。
+
+```bash
+export MEDIA_DB_PATH="/path/to/CDArchive/collection.db"
+streamlit run app.py
+```
+
+同一SQLiteファイルを複数のMacや複数プロセスから同時に開かないでください。
