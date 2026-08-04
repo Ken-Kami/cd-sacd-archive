@@ -160,6 +160,56 @@ def list_tracks(album_id: int, path: Path | None = None) -> list[dict]:
         ]
 
 
+def list_all_tracks(path: Path | None = None) -> list[dict]:
+    with connect(path) as db:
+        return [
+            dict(row) for row in db.execute(
+                """SELECT
+                    albums.id AS album_id,
+                    albums.title AS album_title,
+                    albums.artists AS album_artists,
+                    albums.label,
+                    albums.catalog_number,
+                    albums.barcode,
+                    albums.media_type,
+                    albums.release_year,
+                    tracks.disc_number,
+                    tracks.track_number,
+                    tracks.title AS track_title,
+                    tracks.artists AS track_artists,
+                    tracks.performers,
+                    tracks.composers,
+                    tracks.duration_ms,
+                    tracks.isrc
+                FROM tracks
+                JOIN albums ON albums.id = tracks.album_id
+                ORDER BY albums.id, tracks.disc_number, tracks.id"""
+            )
+        ]
+
+
+def export_tracks_csv(rows: list[dict]) -> str:
+    fields = (
+        "album_id", "album_title", "album_artists", "label", "catalog_number",
+        "barcode", "media_type", "release_year", "disc_number", "track_number",
+        "track_title", "track_artists", "performers", "composers", "duration",
+        "duration_ms", "isrc",
+    )
+    output = StringIO()
+    writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
+    writer.writeheader()
+    for row in rows:
+        record = dict(row)
+        milliseconds = record.get("duration_ms")
+        if milliseconds:
+            seconds = round(int(milliseconds) / 1000)
+            record["duration"] = f"{seconds // 60}:{seconds % 60:02d}"
+        else:
+            record["duration"] = ""
+        writer.writerow(record)
+    return output.getvalue()
+
+
 def duplicate_candidates(barcode: str = "", catalog_number: str = "", path: Path | None = None) -> list[dict]:
     clauses, values = [], []
     if barcode.strip():
