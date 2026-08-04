@@ -172,7 +172,22 @@ if album_param:
         st.dataframe(track_display, hide_index=True, width="stretch")
         st.metric("収録曲数", len(detail_tracks))
     else:
-        st.info("このアルバムの収録曲情報はまだありません。再登録時のMusicBrainz検索、または今後の手動編集で追加できます。")
+        st.info("このアルバムの収録曲情報はまだありません。")
+        if detail_album.get("barcode") and st.button("バーコードから収録曲を取得", type="primary"):
+            try:
+                with st.spinner("MusicBrainzから収録曲を取得中…"):
+                    matched = lookup_musicbrainz(detail_album["barcode"])
+                    fetched_tracks = lookup_musicbrainz_tracks(
+                        matched.musicbrainz_release_id if matched else ""
+                    )
+                if fetched_tracks:
+                    replace_tracks(int(album_param), fetched_tracks)
+                    st.success(f"{len(fetched_tracks)}曲を保存しました。")
+                    st.rerun()
+                else:
+                    st.warning("MusicBrainzにこの盤の収録曲情報がありませんでした。")
+            except Exception as exc:
+                st.error(f"収録曲の取得に失敗しました: {exc}")
     st.link_button("音盤棚へ戻る", st.context.url)
     st.stop()
 
