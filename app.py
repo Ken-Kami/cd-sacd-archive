@@ -29,19 +29,28 @@ from media_app.storage import (
     list_all_tracks,
     list_albums,
     replace_tracks,
+    storage_description,
+    StorageUnavailableError,
+    using_supabase,
     update_album,
 )
 
 
 st.set_page_config(page_title="わたしの音盤棚", page_icon="💿", layout="wide")
 try:
-    for secret_name in ("OPENAI_API_KEY", "OPENAI_VISION_MODEL"):
+    for secret_name in ("OPENAI_API_KEY", "OPENAI_VISION_MODEL", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"):
         secret_value = st.secrets.get(secret_name, "")
         if secret_value and not os.getenv(secret_name):
             os.environ[secret_name] = str(secret_value)
 except FileNotFoundError:
     pass
-initialize()
+try:
+    initialize()
+except StorageUnavailableError as exc:
+    st.error("Supabaseへ接続できません。")
+    st.warning("Streamlit CloudのSecretsと、Supabaseのalbums・tracksテーブルを確認してください。")
+    st.caption(str(exc))
+    st.stop()
 
 if "draft" not in st.session_state:
     st.session_state.draft = AlbumDraft()
@@ -139,7 +148,7 @@ def album_fields(prefix: str, draft: AlbumDraft) -> dict:
 
 st.title("💿 わたしの音盤棚")
 st.caption("CD・SACDを、見つけやすく、重複なく。国内盤も輸入盤もまとめて管理。")
-st.caption("アプリ版: 0.3.0（収録曲詳細版）")
+st.caption("アプリ版: 0.4.0（Supabase永続保存版）")
 
 
 def duration_text(milliseconds) -> str:
@@ -416,8 +425,11 @@ with tab_import:
 
 with tab_settings:
     st.subheader("保存先")
-    st.code(str(database_path()), language=None)
-    st.caption("環境変数 MEDIA_DB_PATH でiCloud Drive上のSQLiteファイルも指定できます。同じDBを複数プロセスから同時に開かないでください。")
+    st.code(storage_description(), language=None)
+    if using_supabase():
+        st.success("Supabase PostgreSQLへ永続保存しています。")
+    else:
+        st.caption("環境変数 MEDIA_DB_PATH でiCloud Drive上のSQLiteファイルも指定できます。同じDBを複数プロセスから同時に開かないでください。")
     st.subheader("メタデータ")
     st.caption("バーコード検索にはMusicBrainzの公開Webサービスを使用します。取得結果は保存前に必ず確認・修正できます。")
     st.subheader("AI画像読取")
