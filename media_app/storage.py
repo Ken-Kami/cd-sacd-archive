@@ -9,14 +9,15 @@ from io import StringIO
 from pathlib import Path
 from typing import Iterator
 
-from media_app.models import AlbumDraft, join_people
+from media_app.models import AlbumDraft, TrackDraft, join_people
 
 
 DATA_FIELDS = (
     "id", "title", "title_original", "artists", "composers", "performers",
     "label", "catalog_number", "barcode", "media_type", "disc_count", "origin",
     "country", "release_year", "genre", "recording_format", "location",
-    "purchase_date", "purchase_price", "condition", "notes", "source", "created_at",
+    "purchase_date", "purchase_price", "condition", "notes", "musicbrainz_release_id",
+    "source", "created_at",
 )
 TEXT_FIELDS = tuple(field for field in DATA_FIELDS if field not in {"id", "disc_count", "purchase_price"})
 
@@ -54,6 +55,25 @@ def initialize(path: Path | None = None) -> None:
                 {columns}
             )"""
         )
+        existing = {row[1] for row in db.execute("PRAGMA table_info(albums)")}
+        if "musicbrainz_release_id" not in existing:
+            db.execute("ALTER TABLE albums ADD COLUMN musicbrainz_release_id TEXT NOT NULL DEFAULT ''")
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS tracks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                album_id INTEGER NOT NULL,
+                disc_number INTEGER NOT NULL DEFAULT 1,
+                track_number TEXT NOT NULL DEFAULT '',
+                title TEXT NOT NULL,
+                artists TEXT NOT NULL DEFAULT '',
+                performers TEXT NOT NULL DEFAULT '',
+                composers TEXT NOT NULL DEFAULT '',
+                duration_ms INTEGER,
+                isrc TEXT NOT NULL DEFAULT '',
+                FOREIGN KEY(album_id) REFERENCES albums(id) ON DELETE CASCADE
+            )"""
+        )
+        db.execute("CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album_id, disc_number, id)")
         for field in ("barcode", "catalog_number", "title", "artists", "label"):
             db.execute(f"CREATE INDEX IF NOT EXISTS idx_albums_{field} ON albums({field})")
 
@@ -104,7 +124,40 @@ def list_albums(query: str = "", path: Path | None = None) -> list[dict]:
 
 def delete_album(album_id: int, path: Path | None = None) -> None:
     with connect(path) as db:
+        db.execute("DELETE FROM tracks WHERE album_id = ?", (album_id,))
         db.execute("DELETE FROM albums WHERE id = ?", (album_id,))
+
+
+def get_album(album_id: int, path: Path | None = None) -> dict | None:
+    with connect(path) as db:
+        row = db.execute("SELECT * FROM albums WHERE id = ?", (album_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def replace_tracks(album_id: int, tracks: list[TrackDraft], path: Path | None = None) -> None:
+    with connect(path) as db:
+        db.execute("DELETE FROM tracks WHERE album_id = ?", (album_id,))
+        db.executemany(
+            """INSERT INTO tracks
+               (album_id, disc_number, track_number, title, artists, performers,
+                composers, duration_ms, isrc)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [
+                (album_id, item.disc_number, item.track_number, item.title, item.artists,
+                 item.performers, item.composers, item.duration_ms, item.isrc)
+                for item in tracks
+            ],
+        )
+
+
+def list_tracks(album_id: int, path: Path | None = None) -> list[dict]:
+    with connect(path) as db:
+        return [
+            dict(row) for row in db.execute(
+                "SELECT * FROM tracks WHERE album_id = ? ORDER BY disc_number, id",
+                (album_id,),
+            )
+        ]
 
 
 def duplicate_candidates(barcode: str = "", catalog_number: str = "", path: Path | None = None) -> list[dict]:

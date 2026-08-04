@@ -4,9 +4,9 @@ from io import BytesIO
 import zxingcpp
 from PIL import Image
 
-from media_app.models import AlbumDraft, join_people, split_people
+from media_app.models import AlbumDraft, TrackDraft, join_people, split_people
 from media_app.recognition import barcode_from_image, barcode_is_valid, normalize_barcode
-from media_app.storage import add_album, delete_album, duplicate_candidates, initialize, list_albums, update_album
+from media_app.storage import add_album, delete_album, duplicate_candidates, initialize, list_albums, list_tracks, replace_tracks, update_album
 
 
 def test_barcode_helpers() -> None:
@@ -40,3 +40,17 @@ def test_storage_round_trip(tmp_path: Path) -> None:
     assert list_albums("全集", path)[0]["media_type"] == "SACD"
     delete_album(album_id, path)
     assert list_albums(path=path) == []
+
+
+def test_tracks_round_trip(tmp_path: Path) -> None:
+    path = tmp_path / "collection.db"
+    initialize(path)
+    album_id = add_album(AlbumDraft(title="曲目テスト"), path=path)
+    replace_tracks(
+        album_id,
+        [TrackDraft(track_number="1", title="第1楽章", performers="演奏者", duration_ms=125000)],
+        path,
+    )
+    tracks = list_tracks(album_id, path)
+    assert tracks[0]["title"] == "第1楽章"
+    assert tracks[0]["duration_ms"] == 125000
