@@ -31,6 +31,18 @@ class AlbumDraft(BaseModel):
     purchase_price: Optional[int] = Field(default=None, ge=0)
     condition: str = ""
     notes: str = ""
+    musicbrainz_release_id: str = ""
+
+
+class TrackDraft(BaseModel):
+    disc_number: int = Field(default=1, ge=1)
+    track_number: str = ""
+    title: str = ""
+    artists: str = ""
+    performers: str = ""
+    composers: str = ""
+    duration_ms: Optional[int] = Field(default=None, ge=0)
+    isrc: str = ""
 
 
 def split_people(value: str) -> list[str]:

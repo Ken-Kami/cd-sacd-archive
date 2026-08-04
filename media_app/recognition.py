@@ -10,7 +10,7 @@ import zxingcpp
 from openai import OpenAI
 from PIL import Image, ImageFilter, ImageOps
 
-from media_app.models import AlbumDraft
+from media_app.models import AlbumDraft, TrackDraft
 
 
 def api_key() -> str:
@@ -150,4 +150,60 @@ def lookup_musicbrainz(barcode: str) -> AlbumDraft | None:
         disc_count=max(len(media), 1),
         country=release.get("country", "") or "",
         release_year=(release.get("date", "") or "")[:4],
+        musicbrainz_release_id=release.get("id", "") or "",
     )
+
+
+def _credit_names(credits: list) -> str:
+    names = [item.get("name", "") for item in credits if isinstance(item, dict) and item.get("name")]
+    return " ; ".join(names)
+
+
+def lookup_musicbrainz_tracks(release_id: str) -> list[TrackDraft]:
+    if not release_id:
+        return []
+    response = requests.get(
+        f"https://musicbrainz.org/ws/2/release/{release_id}",
+        params={
+            "inc": "recordings+artist-credits+isrcs+artist-rels+recording-level-rels+work-rels+work-level-rels",
+            "fmt": "json",
+        },
+        headers={"User-Agent": "CDArchive/1.0 (personal collection manager)"},
+        timeout=20,
+    )
+    response.raise_for_status()
+    result: list[TrackDraft] = []
+    for disc_index, medium in enumerate(response.json().get("media", []), start=1):
+        disc_number = int(medium.get("position") or disc_index)
+        for position, track in enumerate(medium.get("tracks", []), start=1):
+            recording = track.get("recording") or {}
+            performers: list[str] = []
+            composers: list[str] = []
+            for relation in recording.get("relations", []):
+                artist = (relation.get("artist") or {}).get("name", "")
+                role = relation.get("type", "")
+                if artist and role in {"instrument", "vocal", "performer", "conductor"}:
+                    label = f"{artist} ({role})" if role else artist
+                    if label not in performers:
+                        performers.append(label)
+                work = relation.get("work") or {}
+                for work_relation in work.get("relations", []):
+                    creator = (work_relation.get("artist") or {}).get("name", "")
+                    creator_role = work_relation.get("type", "")
+                    if creator and creator_role in {"composer", "writer", "lyricist"}:
+                        label = f"{creator} ({creator_role})"
+                        if label not in composers:
+                            composers.append(label)
+            result.append(
+                TrackDraft(
+                    disc_number=disc_number,
+                    track_number=str(track.get("number") or position),
+                    title=track.get("title") or recording.get("title", ""),
+                    artists=_credit_names(track.get("artist-credit") or recording.get("artist-credit") or []),
+                    performers=" ; ".join(performers),
+                    composers=" ; ".join(composers),
+                    duration_ms=track.get("length") or recording.get("length"),
+                    isrc=" ; ".join(recording.get("isrcs") or []),
+                )
+            )
+    return result

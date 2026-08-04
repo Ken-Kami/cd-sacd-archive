@@ -12,6 +12,7 @@ from media_app.recognition import (
     barcode_is_valid,
     extract_album_with_ai,
     lookup_musicbrainz,
+    lookup_musicbrainz_tracks,
     normalize_barcode,
 )
 from media_app.storage import (
@@ -22,7 +23,10 @@ from media_app.storage import (
     export_csv,
     import_csv,
     initialize,
+    get_album,
+    list_tracks,
     list_albums,
+    replace_tracks,
     update_album,
 )
 
@@ -41,6 +45,8 @@ if "draft" not in st.session_state:
     st.session_state.draft = AlbumDraft()
 if "draft_source" not in st.session_state:
     st.session_state.draft_source = "manual"
+if "draft_tracks" not in st.session_state:
+    st.session_state.draft_tracks = []
 if st.session_state.pop("reset_new_form", False):
     st.session_state.draft = AlbumDraft()
     st.session_state.draft_source = "manual"
@@ -125,12 +131,51 @@ def album_fields(prefix: str, draft: AlbumDraft) -> dict:
         genre=genre, recording_format=recording_format, location=location,
         purchase_date=purchase_date, purchase_price=int(purchase_price) or None,
         condition=condition, notes=notes,
+        musicbrainz_release_id=draft.musicbrainz_release_id,
     )
 
 
 st.title("💿 わたしの音盤棚")
 st.caption("CD・SACDを、見つけやすく、重複なく。国内盤も輸入盤もまとめて管理。")
-st.caption("アプリ版: 0.2.2（読取結果のフォーム反映改善版）")
+st.caption("アプリ版: 0.3.0（収録曲詳細版）")
+
+
+def duration_text(milliseconds) -> str:
+    if not milliseconds:
+        return ""
+    total_seconds = round(int(milliseconds) / 1000)
+    return f"{total_seconds // 60}:{total_seconds % 60:02d}"
+
+
+album_param = st.query_params.get("album")
+if album_param:
+    try:
+        detail_album = get_album(int(album_param))
+    except (TypeError, ValueError):
+        detail_album = None
+    if not detail_album:
+        st.error("指定されたアルバムが見つかりません。")
+        st.stop()
+    st.header(detail_album["title"])
+    st.caption(" / ".join(filter(None, [detail_album.get("artists", ""), detail_album.get("label", ""), detail_album.get("catalog_number", "")])))
+    detail_tracks = list_tracks(int(album_param))
+    if detail_tracks:
+        track_display = pd.DataFrame([
+            {
+                "Disc": row["disc_number"], "No.": row["track_number"], "曲名": row["title"],
+                "アーティスト": row["artists"], "演者": row["performers"],
+                "作曲者等": row["composers"], "時間": duration_text(row["duration_ms"]),
+                "ISRC": row["isrc"],
+            }
+            for row in detail_tracks
+        ])
+        st.dataframe(track_display, hide_index=True, width="stretch")
+        st.metric("収録曲数", len(detail_tracks))
+    else:
+        st.info("このアルバムの収録曲情報はまだありません。再登録時のMusicBrainz検索、または今後の手動編集で追加できます。")
+    st.link_button("音盤棚へ戻る", st.context.url)
+    st.stop()
+
 tab_add, tab_shelf, tab_import, tab_settings = st.tabs(["音盤を登録", "音盤棚", "一括登録", "設定"])
 
 with tab_add:
@@ -180,6 +225,8 @@ with tab_add:
                         try:
                             with st.spinner("バーコードと音盤情報を確認中…"):
                                 found = lookup_musicbrainz(barcode)
+                                if found:
+                                    st.session_state.draft_tracks = lookup_musicbrainz_tracks(found.musicbrainz_release_id)
                         except Exception as exc:
                             lookup_error = str(exc)
                         set_draft(found or AlbumDraft(barcode=barcode), "barcode-photo")
@@ -216,6 +263,8 @@ with tab_add:
                             if found.barcode:
                                 catalog = lookup_musicbrainz(found.barcode)
                                 if catalog:
+                                    found.musicbrainz_release_id = catalog.musicbrainz_release_id
+                                    st.session_state.draft_tracks = lookup_musicbrainz_tracks(catalog.musicbrainz_release_id)
                                     for field in ("title", "artists", "label", "catalog_number", "country", "release_year"):
                                         if not getattr(found, field):
                                             setattr(found, field, getattr(catalog, field))
@@ -237,6 +286,7 @@ with tab_add:
                     with st.spinner("音盤情報を検索中…"):
                         found = lookup_musicbrainz(barcode)
                     if found:
+                        st.session_state.draft_tracks = lookup_musicbrainz_tracks(found.musicbrainz_release_id)
                         set_draft(found, "MusicBrainz")
                         st.success("候補が見つかりました。右側で確認してください。")
                         st.rerun()
@@ -261,8 +311,11 @@ with tab_add:
                 if duplicates:
                     st.warning(f"同じバーコードまたは規格品番の登録が {len(duplicates)} 件あります。内容を確認してください。")
                 else:
-                    add_album(album, st.session_state.draft_source)
+                    saved_album_id = add_album(album, st.session_state.draft_source)
+                    if st.session_state.draft_tracks:
+                        replace_tracks(saved_album_id, st.session_state.draft_tracks)
                     st.session_state.reset_new_form = True
+                    st.session_state.draft_tracks = []
                     st.session_state.pop("last_recognition", None)
                     st.success("音盤棚に保存しました。")
                     st.rerun()
@@ -280,14 +333,23 @@ with tab_shelf:
     m2.metric("総ディスク枚数", sum(int(row.get("disc_count") or 1) for row in filtered))
     m3.metric("SACD系", sum("SACD" in row.get("media_type", "") for row in filtered))
     if filtered:
-        display = pd.DataFrame(filtered).rename(columns={
+        display_rows = [dict(row, track_link=f"{st.context.url}?album={row['id']}") for row in filtered]
+        display = pd.DataFrame(display_rows).rename(columns={
             "id": "ID", "title": "アルバム", "artists": "アーティスト", "composers": "作曲家",
             "performers": "演奏者", "label": "レーベル", "catalog_number": "規格品番",
             "barcode": "バーコード", "media_type": "盤種", "disc_count": "枚数", "origin": "国内／輸入",
             "country": "発売国", "release_year": "発売年", "genre": "ジャンル", "location": "保管場所",
+            "track_link": "収録曲",
         })
-        preferred = ["ID", "アルバム", "アーティスト", "作曲家", "演奏者", "レーベル", "規格品番", "盤種", "枚数", "国内／輸入", "発売国", "発売年", "ジャンル", "保管場所"]
-        st.dataframe(display[[column for column in preferred if column in display]], hide_index=True, width="stretch")
+        preferred = ["ID", "アルバム", "収録曲", "アーティスト", "作曲家", "演奏者", "レーベル", "規格品番", "盤種", "枚数", "国内／輸入", "発売国", "発売年", "ジャンル", "保管場所"]
+        st.dataframe(
+            display[[column for column in preferred if column in display]],
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "収録曲": st.column_config.LinkColumn("収録曲", display_text="別タブで見る"),
+            },
+        )
         st.download_button("CSVを書き出す", export_csv(filtered).encode("utf-8-sig"), "cd_sacd_collection.csv", "text/csv")
         choices = {f"{row['title']}（ID: {row['id']}）": row for row in filtered}
         with st.expander("登録内容を編集"):
