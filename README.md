@@ -39,3 +39,18 @@ streamlit run app.py
 ```
 
 同一SQLiteファイルを複数のMacや複数プロセスから同時に開かないでください。
+
+## Streamlit Cloud / Supabase
+
+Streamlit CloudではSQLiteを使わず、Supabase PostgreSQLへ永続保存します。
+
+1. SupabaseのSQL Editorで `supabase_schema.sql` を実行します。
+2. Streamlit Cloudの `App settings > Secrets` に次を設定します。
+
+```toml
+SUPABASE_URL = "https://YOUR_PROJECT.supabase.co"
+SUPABASE_SERVICE_ROLE_KEY = "YOUR_SERVICE_ROLE_KEY"
+```
+
+`service_role`キーは管理者権限を持ちます。GitHub、ソースコード、画面共有へ載せないでください。
+Secretsに両方の値がある場合はSupabase、ない場合はローカルSQLiteを自動使用します。

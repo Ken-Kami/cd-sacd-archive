@@ -5,6 +5,7 @@ import zxingcpp
 from PIL import Image
 
 from media_app.models import AlbumDraft, TrackDraft, join_people, split_people
+from media_app import storage
 from media_app.recognition import barcode_from_image, barcode_is_valid, normalize_barcode
 from media_app.storage import add_album, delete_album, duplicate_candidates, export_tracks_csv, initialize, list_albums, list_all_tracks, list_tracks, replace_tracks, update_album
 
@@ -60,3 +61,48 @@ def test_tracks_round_trip(tmp_path: Path) -> None:
     assert "track_title" in exported
     assert "第1楽章" in exported
     assert "2:05" in exported
+
+
+def test_supabase_album_and_tracks(monkeypatch) -> None:
+    albums, tracks = [], []
+
+    class Response:
+        def __init__(self, payload):
+            self.payload = payload
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return self.payload
+
+    def fake_request(method, url, **kwargs):
+        table = url.rsplit("/", 1)[-1]
+        data = albums if table == "albums" else tracks
+        params = kwargs.get("params") or {}
+        if method == "POST":
+            incoming = kwargs.get("json")
+            records = incoming if isinstance(incoming, list) else [incoming]
+            for record in records:
+                saved = dict(record, id=len(data) + 1)
+                data.append(saved)
+            return Response(data[-len(records):])
+        if method == "DELETE":
+            album_filter = params.get("album_id", "")
+            if album_filter:
+                target = int(album_filter.split(".")[-1])
+                data[:] = [row for row in data if int(row.get("album_id", 0)) != target]
+            return Response([])
+        if params.get("id"):
+            target = int(params["id"].split(".")[-1])
+            return Response([row for row in data if int(row["id"]) == target])
+        if params.get("album_id"):
+            target = int(params["album_id"].split(".")[-1])
+            return Response([row for row in data if int(row["album_id"]) == target])
+        return Response(list(data))
+
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "test-key")
+    monkeypatch.setattr(storage.requests, "request", fake_request)
+    album_id = storage.add_album(AlbumDraft(title="クラウド盤"))
+    storage.replace_tracks(album_id, [TrackDraft(title="クラウド曲")])
+    assert storage.get_album(album_id)["title"] == "クラウド盤"
+    assert storage.list_tracks(album_id)[0]["title"] == "クラウド曲"
