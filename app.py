@@ -21,10 +21,12 @@ from media_app.storage import (
     delete_album,
     duplicate_candidates,
     export_csv,
+    export_tracks_csv,
     import_csv,
     initialize,
     get_album,
     list_tracks,
+    list_all_tracks,
     list_albums,
     replace_tracks,
     update_album,
@@ -171,6 +173,13 @@ if album_param:
         ])
         st.dataframe(track_display, hide_index=True, width="stretch")
         st.metric("収録曲数", len(detail_tracks))
+        album_track_rows = [dict(row, album_id=detail_album["id"], album_title=detail_album["title"], album_artists=detail_album.get("artists", ""), label=detail_album.get("label", ""), catalog_number=detail_album.get("catalog_number", ""), barcode=detail_album.get("barcode", ""), media_type=detail_album.get("media_type", ""), release_year=detail_album.get("release_year", ""), track_title=row["title"], track_artists=row["artists"]) for row in detail_tracks]
+        st.download_button(
+            "このアルバムの収録曲CSVを書き出す",
+            export_tracks_csv(album_track_rows).encode("utf-8-sig"),
+            file_name=f"album_{detail_album['id']}_tracks.csv",
+            mime="text/csv",
+        )
     else:
         st.info("このアルバムの収録曲情報はまだありません。")
         if detail_album.get("barcode") and st.button("バーコードから収録曲を取得", type="primary"):
@@ -366,6 +375,14 @@ with tab_shelf:
             },
         )
         st.download_button("CSVを書き出す", export_csv(filtered).encode("utf-8-sig"), "cd_sacd_collection.csv", "text/csv")
+        all_track_rows = list_all_tracks()
+        if all_track_rows:
+            st.download_button(
+                f"全収録曲CSVを書き出す（{len(all_track_rows):,}曲）",
+                export_tracks_csv(all_track_rows).encode("utf-8-sig"),
+                "cd_sacd_all_tracks.csv",
+                "text/csv",
+            )
         choices = {f"{row['title']}（ID: {row['id']}）": row for row in filtered}
         with st.expander("登録内容を編集"):
             selected_label = st.selectbox("編集する音盤", choices, key="edit_choice")
