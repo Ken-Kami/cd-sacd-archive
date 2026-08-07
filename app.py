@@ -11,6 +11,7 @@ from media_app.recognition import (
     barcode_from_image,
     barcode_is_valid,
     extract_album_with_ai,
+    lookup_cover_art,
     lookup_musicbrainz,
     lookup_musicbrainz_tracks,
     normalize_barcode,
@@ -33,6 +34,7 @@ from media_app.storage import (
     StorageUnavailableError,
     using_supabase,
     update_album,
+    update_album_cover,
 )
 
 
@@ -143,12 +145,14 @@ def album_fields(prefix: str, draft: AlbumDraft) -> dict:
         purchase_date=purchase_date, purchase_price=int(purchase_price) or None,
         condition=condition, notes=notes,
         musicbrainz_release_id=draft.musicbrainz_release_id,
+        cover_url=draft.cover_url,
+        cover_source=draft.cover_source,
     )
 
 
 st.title("💿 わたしの音盤棚")
 st.caption("CD・SACDを、見つけやすく、重複なく。国内盤も輸入盤もまとめて管理。")
-st.caption("アプリ版: 0.4.0（Supabase永続保存版）")
+st.caption("アプリ版: 0.5.0（アルバムジャケット対応版）")
 
 
 def duration_text(milliseconds) -> str:
@@ -169,6 +173,23 @@ if album_param:
         st.stop()
     st.header(detail_album["title"])
     st.caption(" / ".join(filter(None, [detail_album.get("artists", ""), detail_album.get("label", ""), detail_album.get("catalog_number", "")])))
+    if detail_album.get("cover_url"):
+        st.image(detail_album["cover_url"], width=420, caption=detail_album.get("cover_source") or "アルバムジャケット")
+    elif detail_album.get("musicbrainz_release_id") or detail_album.get("barcode"):
+        if st.button("ジャケット画像を取得"):
+            try:
+                release_id = detail_album.get("musicbrainz_release_id", "")
+                if not release_id and detail_album.get("barcode"):
+                    matched_cover_album = lookup_musicbrainz(detail_album["barcode"])
+                    release_id = matched_cover_album.musicbrainz_release_id if matched_cover_album else ""
+                cover_url = lookup_cover_art(release_id)
+                if cover_url:
+                    update_album_cover(int(album_param), cover_url, "Cover Art Archive")
+                    st.rerun()
+                else:
+                    st.warning("Cover Art Archiveにこの盤のジャケット画像がありませんでした。")
+            except Exception as exc:
+                st.error(f"ジャケット画像の取得に失敗しました: {exc}")
     detail_tracks = list_tracks(int(album_param))
     if detail_tracks:
         track_display = pd.DataFrame([
@@ -297,6 +318,8 @@ with tab_add:
                                 catalog = lookup_musicbrainz(found.barcode)
                                 if catalog:
                                     found.musicbrainz_release_id = catalog.musicbrainz_release_id
+                                    found.cover_url = catalog.cover_url
+                                    found.cover_source = catalog.cover_source
                                     st.session_state.draft_tracks = lookup_musicbrainz_tracks(catalog.musicbrainz_release_id)
                                     for field in ("title", "artists", "label", "catalog_number", "country", "release_year"):
                                         if not getattr(found, field):
@@ -373,14 +396,16 @@ with tab_shelf:
             "barcode": "バーコード", "media_type": "盤種", "disc_count": "枚数", "origin": "国内／輸入",
             "country": "発売国", "release_year": "発売年", "genre": "ジャンル", "location": "保管場所",
             "track_link": "収録曲",
+            "cover_url": "ジャケット",
         })
-        preferred = ["ID", "アルバム", "収録曲", "アーティスト", "作曲家", "演奏者", "レーベル", "規格品番", "盤種", "枚数", "国内／輸入", "発売国", "発売年", "ジャンル", "保管場所"]
+        preferred = ["ID", "ジャケット", "アルバム", "収録曲", "アーティスト", "作曲家", "演奏者", "レーベル", "規格品番", "盤種", "枚数", "国内／輸入", "発売国", "発売年", "ジャンル", "保管場所"]
         st.dataframe(
             display[[column for column in preferred if column in display]],
             hide_index=True,
             width="stretch",
             column_config={
                 "収録曲": st.column_config.LinkColumn("収録曲", display_text="別タブで見る"),
+                "ジャケット": st.column_config.ImageColumn("ジャケット", width="small"),
             },
         )
         st.download_button("CSVを書き出す", export_csv(filtered).encode("utf-8-sig"), "cd_sacd_collection.csv", "text/csv")

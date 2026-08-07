@@ -19,6 +19,7 @@ DATA_FIELDS = (
     "label", "catalog_number", "barcode", "media_type", "disc_count", "origin",
     "country", "release_year", "genre", "recording_format", "location",
     "purchase_date", "purchase_price", "condition", "notes", "musicbrainz_release_id",
+    "cover_url", "cover_source",
     "source", "created_at",
 )
 TEXT_FIELDS = tuple(field for field in DATA_FIELDS if field not in {"id", "disc_count", "purchase_price"})
@@ -101,8 +102,9 @@ def initialize(path: Path | None = None) -> None:
             )"""
         )
         existing = {row[1] for row in db.execute("PRAGMA table_info(albums)")}
-        if "musicbrainz_release_id" not in existing:
-            db.execute("ALTER TABLE albums ADD COLUMN musicbrainz_release_id TEXT NOT NULL DEFAULT ''")
+        for field in ("musicbrainz_release_id", "cover_url", "cover_source"):
+            if field not in existing:
+                db.execute(f"ALTER TABLE albums ADD COLUMN {field} TEXT NOT NULL DEFAULT ''")
         db.execute(
             """CREATE TABLE IF NOT EXISTS tracks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -192,6 +194,18 @@ def get_album(album_id: int, path: Path | None = None) -> dict | None:
     with connect(path) as db:
         row = db.execute("SELECT * FROM albums WHERE id = ?", (album_id,)).fetchone()
         return dict(row) if row else None
+
+
+def update_album_cover(album_id: int, cover_url: str, cover_source: str, path: Path | None = None) -> None:
+    values = {"cover_url": cover_url.strip(), "cover_source": cover_source.strip()}
+    if path is None and using_supabase():
+        _supabase_request("PATCH", "albums", params={"id": f"eq.{album_id}"}, json=values, prefer="return=minimal")
+        return
+    with connect(path) as db:
+        db.execute(
+            "UPDATE albums SET cover_url = ?, cover_source = ? WHERE id = ?",
+            (values["cover_url"], values["cover_source"], album_id),
+        )
 
 
 def replace_tracks(album_id: int, tracks: list[TrackDraft], path: Path | None = None) -> None:
