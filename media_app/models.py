@@ -32,6 +32,8 @@ class AlbumDraft(BaseModel):
     condition: str = ""
     notes: str = ""
     musicbrainz_release_id: str = ""
+    cover_url: str = ""
+    cover_source: str = ""
 
 
 class TrackDraft(BaseModel):

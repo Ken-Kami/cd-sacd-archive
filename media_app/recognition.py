@@ -140,6 +140,8 @@ def lookup_musicbrainz(barcode: str) -> AlbumDraft | None:
     media = release.get("media", [])
     formats = {str(item.get("format", "")) for item in media}
     media_type = "SACD Hybrid" if any("Hybrid SACD" in value for value in formats) else ("SACD" if any("SACD" in value for value in formats) else "CD")
+    release_id = release.get("id", "") or ""
+    cover_url = lookup_cover_art(release_id)
     return AlbumDraft(
         title=release.get("title", ""),
         artists=[credit.get("name", "") for credit in release.get("artist-credit", []) if credit.get("name")],
@@ -150,8 +152,34 @@ def lookup_musicbrainz(barcode: str) -> AlbumDraft | None:
         disc_count=max(len(media), 1),
         country=release.get("country", "") or "",
         release_year=(release.get("date", "") or "")[:4],
-        musicbrainz_release_id=release.get("id", "") or "",
+        musicbrainz_release_id=release_id,
+        cover_url=cover_url,
+        cover_source="Cover Art Archive" if cover_url else "",
     )
+
+
+def lookup_cover_art(release_id: str) -> str:
+    """MusicBrainz Release IDに対応する表ジャケットの表示用URLを返す。"""
+    if not release_id:
+        return ""
+    try:
+        response = requests.get(
+            f"https://coverartarchive.org/release/{release_id}",
+            headers={"Accept": "application/json", "User-Agent": "CDArchive/1.0 (personal collection manager)"},
+            timeout=15,
+        )
+        if response.status_code == 404:
+            return ""
+        response.raise_for_status()
+        images = response.json().get("images", [])
+        selected = next((item for item in images if item.get("front")), images[0] if images else None)
+        if not selected:
+            return ""
+        thumbnails = selected.get("thumbnails") or {}
+        url = thumbnails.get("large") or thumbnails.get("500") or thumbnails.get("250") or selected.get("image", "")
+        return url.replace("http://", "https://", 1)
+    except (requests.RequestException, ValueError):
+        return ""
 
 
 def _credit_names(credits: list) -> str:

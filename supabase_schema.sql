@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS public.albums (
     condition TEXT NOT NULL DEFAULT '',
     notes TEXT NOT NULL DEFAULT '',
     musicbrainz_release_id TEXT NOT NULL DEFAULT '',
+    cover_url TEXT NOT NULL DEFAULT '',
+    cover_source TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL DEFAULT 'manual',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -45,6 +47,10 @@ CREATE INDEX IF NOT EXISTS idx_tracks_album_order ON public.tracks(album_id, dis
 
 ALTER TABLE public.albums ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.tracks ENABLE ROW LEVEL SECURITY;
+
+-- 既にalbumsテーブルを作成済みの場合の安全な追加。
+ALTER TABLE public.albums ADD COLUMN IF NOT EXISTS cover_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE public.albums ADD COLUMN IF NOT EXISTS cover_source TEXT NOT NULL DEFAULT '';
 
 -- このアプリはStreamlit Secretsのservice_roleキーでアクセスします。
 -- service_roleはRLSをバイパスするため、公開クライアントへ絶対に渡さないでください。

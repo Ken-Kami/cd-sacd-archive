@@ -5,7 +5,7 @@ import zxingcpp
 from PIL import Image
 
 from media_app.models import AlbumDraft, TrackDraft, join_people, split_people
-from media_app import storage
+from media_app import recognition, storage
 from media_app.recognition import barcode_from_image, barcode_is_valid, normalize_barcode
 from media_app.storage import add_album, delete_album, duplicate_candidates, export_tracks_csv, initialize, list_albums, list_all_tracks, list_tracks, replace_tracks, update_album
 
@@ -106,3 +106,19 @@ def test_supabase_album_and_tracks(monkeypatch) -> None:
     storage.replace_tracks(album_id, [TrackDraft(title="クラウド曲")])
     assert storage.get_album(album_id)["title"] == "クラウド盤"
     assert storage.list_tracks(album_id)[0]["title"] == "クラウド曲"
+
+
+def test_cover_art_prefers_front_large_thumbnail(monkeypatch) -> None:
+    class Response:
+        status_code = 200
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {
+                "images": [
+                    {"front": False, "image": "https://example/back.jpg"},
+                    {"front": True, "image": "https://example/front.jpg", "thumbnails": {"large": "https://example/front-large.jpg"}},
+                ]
+            }
+    monkeypatch.setattr(recognition.requests, "get", lambda *args, **kwargs: Response())
+    assert recognition.lookup_cover_art("release-id") == "https://example/front-large.jpg"
