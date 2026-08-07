@@ -1,9 +1,21 @@
 from __future__ import annotations
 
+import importlib
 import os
 
 import pandas as pd
 import streamlit as st
+
+# Streamlit Cloudのホット更新でapp.pyだけが再実行されても、関連モジュールを
+# GitHub上の最新版へ揃える。複数ファイル更新時の古いimportキャッシュを防ぐ。
+from media_app import models as _models
+
+_models = importlib.reload(_models)
+from media_app import recognition as _recognition
+from media_app import storage as _storage
+
+_recognition = importlib.reload(_recognition)
+_storage = importlib.reload(_storage)
 
 from media_app.models import AlbumDraft, GENRES, MEDIA_TYPES, ORIGINS, split_people
 from media_app.recognition import (
@@ -152,7 +164,7 @@ def album_fields(prefix: str, draft: AlbumDraft) -> dict:
 
 st.title("💿 わたしの音盤棚")
 st.caption("CD・SACDを、見つけやすく、重複なく。国内盤も輸入盤もまとめて管理。")
-st.caption("アプリ版: 0.5.0（アルバムジャケット対応版）")
+st.caption("アプリ版: 0.5.1（Cloud再読込安定化版）")
 
 
 def duration_text(milliseconds) -> str:
