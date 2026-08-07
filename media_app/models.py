@@ -47,6 +47,14 @@ class TrackDraft(BaseModel):
     isrc: str = ""
 
 
+class AlbumLookupResult(BaseModel):
+    """外部検索または画像認識で得たアルバム情報一式。"""
+
+    album: AlbumDraft = Field(default_factory=AlbumDraft)
+    tracks: list[TrackDraft] = Field(default_factory=list)
+    source: str = ""
+
+
 def split_people(value: str) -> list[str]:
     return [part.strip() for part in value.replace("；", ";").split(";") if part.strip()]
 

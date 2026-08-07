@@ -1,15 +1,29 @@
 from __future__ import annotations
 
+import importlib
 import os
 
 import pandas as pd
 import streamlit as st
+
+# Streamlit Cloudのホット更新でapp.pyだけが再実行されても、関連モジュールを
+# GitHub上の最新版へ揃える。複数ファイル更新時の古いimportキャッシュを防ぐ。
+from media_app import models as _models
+
+_models = importlib.reload(_models)
+from media_app import recognition as _recognition
+from media_app import storage as _storage
+
+_recognition = importlib.reload(_recognition)
+_storage = importlib.reload(_storage)
 
 from media_app.models import AlbumDraft, GENRES, MEDIA_TYPES, ORIGINS, split_people
 from media_app.recognition import (
     api_key,
     barcode_from_image,
     barcode_is_valid,
+    enrich_album_metadata,
+    extract_album_package_with_ai,
     extract_album_with_ai,
     lookup_cover_art,
     lookup_musicbrainz,
@@ -40,7 +54,7 @@ from media_app.storage import (
 
 st.set_page_config(page_title="わたしの音盤棚", page_icon="💿", layout="wide")
 try:
-    for secret_name in ("OPENAI_API_KEY", "OPENAI_VISION_MODEL", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"):
+    for secret_name in ("OPENAI_API_KEY", "OPENAI_VISION_MODEL", "DISCOGS_USER_TOKEN", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"):
         secret_value = st.secrets.get(secret_name, "")
         if secret_value and not os.getenv(secret_name):
             os.environ[secret_name] = str(secret_value)
@@ -152,7 +166,7 @@ def album_fields(prefix: str, draft: AlbumDraft) -> dict:
 
 st.title("💿 わたしの音盤棚")
 st.caption("CD・SACDを、見つけやすく、重複なく。国内盤も輸入盤もまとめて管理。")
-st.caption("アプリ版: 0.5.0（アルバムジャケット対応版）")
+st.caption("アプリ版: 0.6.0（段階的メタデータ検索対応版）")
 
 
 def duration_text(milliseconds) -> str:
@@ -191,6 +205,22 @@ if album_param:
             except Exception as exc:
                 st.error(f"ジャケット画像の取得に失敗しました: {exc}")
     detail_tracks = list_tracks(int(album_param))
+    st.subheader("情報の補完")
+    st.caption("保存済みの入力内容を残したまま、空欄・ジャケット・未登録の収録曲を検索します。")
+    if st.button("アルバム情報・収録曲を再取得して補完", type="primary"):
+        try:
+            with st.spinner("MusicBrainz、Discogs、Webを順に検索中…"):
+                enriched = enrich_album_metadata(album_from_row(detail_album))
+                update_album(int(album_param), enriched.album)
+                if enriched.tracks and not detail_tracks:
+                    replace_tracks(int(album_param), enriched.tracks)
+            if enriched.source:
+                st.success(f"{enriched.source}から情報を補完しました。")
+            else:
+                st.warning("一致を確認できる追加情報は見つかりませんでした。")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"情報の再取得に失敗しました: {exc}")
     if detail_tracks:
         track_display = pd.DataFrame([
             {
@@ -278,9 +308,9 @@ with tab_add:
                         lookup_error = ""
                         try:
                             with st.spinner("バーコードと音盤情報を確認中…"):
-                                found = lookup_musicbrainz(barcode)
-                                if found:
-                                    st.session_state.draft_tracks = lookup_musicbrainz_tracks(found.musicbrainz_release_id)
+                                enriched = enrich_album_metadata(AlbumDraft(barcode=barcode))
+                                found = enriched.album if enriched.album.title else None
+                                st.session_state.draft_tracks = enriched.tracks
                         except Exception as exc:
                             lookup_error = str(exc)
                         set_draft(found or AlbumDraft(barcode=barcode), "barcode-photo")
@@ -297,7 +327,7 @@ with tab_add:
                         else:
                             st.session_state.last_recognition = {
                                 "status": "warning",
-                                "message": f"バーコード {barcode} は読み取れましたが、MusicBrainzに該当情報がありません。番号を右側へ反映しました。",
+                                "message": f"バーコード {barcode} は読み取れましたが、複数の検索先で一致する盤を確認できませんでした。番号を右側へ反映しました。",
                             }
                         st.rerun()
                 except Exception as exc:
@@ -313,19 +343,12 @@ with tab_add:
                     try:
                         images = [(item.getvalue(), getattr(item, "type", "image/jpeg")) for item in selected_files[:4]]
                         with st.spinner("ジャケット・帯・盤面を分析中…"):
-                            found = extract_album_with_ai(images)
-                            if found.barcode:
-                                catalog = lookup_musicbrainz(found.barcode)
-                                if catalog:
-                                    found.musicbrainz_release_id = catalog.musicbrainz_release_id
-                                    found.cover_url = catalog.cover_url
-                                    found.cover_source = catalog.cover_source
-                                    st.session_state.draft_tracks = lookup_musicbrainz_tracks(catalog.musicbrainz_release_id)
-                                    for field in ("title", "artists", "label", "catalog_number", "country", "release_year"):
-                                        if not getattr(found, field):
-                                            setattr(found, field, getattr(catalog, field))
-                        set_draft(found, "AI画像")
-                        st.success("画像から情報を読み取りました。右側で必ず確認してください。")
+                            image_result = extract_album_package_with_ai(images)
+                            enriched = enrich_album_metadata(image_result.album, image_result.tracks)
+                            found = enriched.album
+                            st.session_state.draft_tracks = enriched.tracks
+                        set_draft(found, enriched.source or "AI画像")
+                        st.success(f"画像を読み取り、{enriched.source or '画像内'}の情報を反映しました。右側で必ず確認してください。")
                         st.rerun()
                     except Exception as exc:
                         st.error(f"AI読取に失敗しました: {exc}")
@@ -340,10 +363,10 @@ with tab_add:
             else:
                 try:
                     with st.spinner("音盤情報を検索中…"):
-                        found = lookup_musicbrainz(barcode)
-                    if found:
-                        st.session_state.draft_tracks = lookup_musicbrainz_tracks(found.musicbrainz_release_id)
-                        set_draft(found, "MusicBrainz")
+                        enriched = enrich_album_metadata(AlbumDraft(barcode=barcode))
+                    if enriched.album.title:
+                        st.session_state.draft_tracks = enriched.tracks
+                        set_draft(enriched.album, enriched.source)
                         st.success("候補が見つかりました。右側で確認してください。")
                         st.rerun()
                     else:
@@ -456,11 +479,15 @@ with tab_settings:
     else:
         st.caption("環境変数 MEDIA_DB_PATH でiCloud Drive上のSQLiteファイルも指定できます。同じDBを複数プロセスから同時に開かないでください。")
     st.subheader("メタデータ")
-    st.caption("バーコード検索にはMusicBrainzの公開Webサービスを使用します。取得結果は保存前に必ず確認・修正できます。")
+    st.caption("MusicBrainzをバーコード、規格品番、タイトル＋アーティストの順で検索し、Discogs、AI Web検索へ補完します。")
+    if os.getenv("DISCOGS_USER_TOKEN", "").strip():
+        st.success("DISCOGS_USER_TOKEN は設定済みです（値は表示しません）。")
+    else:
+        st.info("Discogs検索は未設定です。任意でDISCOGS_USER_TOKENをSecretsへ追加すると検索範囲が広がります。")
     st.subheader("AI画像読取")
     if api_key():
         st.success("OPENAI_API_KEY は設定済みです（値は表示しません）。")
     else:
         st.warning("OPENAI_API_KEY は未設定です。ジャケット画像のAI読取を使う場合は設定してください。")
-    st.code('OPENAI_API_KEY = "sk-..."\nOPENAI_VISION_MODEL = "gpt-5.6-luna"', language="toml")
+    st.code('OPENAI_API_KEY = "sk-..."\nOPENAI_VISION_MODEL = "gpt-5.6-luna"\nDISCOGS_USER_TOKEN = "..."', language="toml")
     st.caption("上記を .streamlit/secrets.toml に保存します。APIキーをソースやGitHubへ登録しないでください。")

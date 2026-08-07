@@ -122,3 +122,24 @@ def test_cover_art_prefers_front_large_thumbnail(monkeypatch) -> None:
             }
     monkeypatch.setattr(recognition.requests, "get", lambda *args, **kwargs: Response())
     assert recognition.lookup_cover_art("release-id") == "https://example/front-large.jpg"
+
+
+def test_metadata_merge_preserves_saved_and_personal_fields() -> None:
+    saved = AlbumDraft(
+        title="手入力タイトル", catalog_number="ABC-1", location="棚A",
+        purchase_date="2026-08-08", purchase_price=3000, condition="帯あり", notes="初版",
+    )
+    found = AlbumDraft(
+        title="検索タイトル", artists=["Artist"], label="Label", catalog_number="OTHER",
+        location="上書き不可", purchase_price=1, notes="上書き不可",
+        cover_url="https://example.com/cover.jpg",
+    )
+    merged = recognition.merge_album_missing(saved, found)
+    assert merged.title == "手入力タイトル"
+    assert merged.catalog_number == "ABC-1"
+    assert merged.artists == ["Artist"]
+    assert merged.label == "Label"
+    assert merged.location == "棚A"
+    assert merged.purchase_price == 3000
+    assert merged.notes == "初版"
+    assert merged.cover_url == "https://example.com/cover.jpg"
