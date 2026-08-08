@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS public.tracks (
     performers TEXT NOT NULL DEFAULT '',
     composers TEXT NOT NULL DEFAULT '',
     duration_ms INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0),
-    isrc TEXT NOT NULL DEFAULT ''
+    isrc TEXT NOT NULL DEFAULT '',
+    rating INTEGER NOT NULL DEFAULT 0 CHECK (rating BETWEEN 0 AND 5)
 );
 
 CREATE INDEX IF NOT EXISTS idx_albums_barcode ON public.albums(barcode);
@@ -53,6 +54,7 @@ ALTER TABLE public.tracks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.albums ADD COLUMN IF NOT EXISTS cover_url TEXT NOT NULL DEFAULT '';
 ALTER TABLE public.albums ADD COLUMN IF NOT EXISTS cover_source TEXT NOT NULL DEFAULT '';
 ALTER TABLE public.albums ADD COLUMN IF NOT EXISTS rating INTEGER NOT NULL DEFAULT 0 CHECK (rating BETWEEN 0 AND 5);
+ALTER TABLE public.tracks ADD COLUMN IF NOT EXISTS rating INTEGER NOT NULL DEFAULT 0 CHECK (rating BETWEEN 0 AND 5);
 
 -- このアプリはStreamlit Secretsのservice_roleキーでアクセスします。
 -- service_roleはRLSをバイパスするため、公開クライアントへ絶対に渡さないでください。

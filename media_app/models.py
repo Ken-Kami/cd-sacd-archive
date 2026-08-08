@@ -46,6 +46,7 @@ class TrackDraft(BaseModel):
     composers: str = ""
     duration_ms: Optional[int] = Field(default=None, ge=0)
     isrc: str = ""
+    rating: int = Field(default=0, ge=0, le=5)
 
 
 class AlbumLookupResult(BaseModel):
