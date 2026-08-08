@@ -29,6 +29,7 @@ class AlbumDraft(BaseModel):
     location: str = ""
     purchase_date: str = ""
     purchase_price: Optional[int] = Field(default=None, ge=0)
+    rating: int = Field(default=0, ge=0, le=5)
     condition: str = ""
     notes: str = ""
     musicbrainz_release_id: str = ""

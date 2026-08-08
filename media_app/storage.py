@@ -18,11 +18,11 @@ DATA_FIELDS = (
     "id", "title", "title_original", "artists", "composers", "performers",
     "label", "catalog_number", "barcode", "media_type", "disc_count", "origin",
     "country", "release_year", "genre", "recording_format", "location",
-    "purchase_date", "purchase_price", "condition", "notes", "musicbrainz_release_id",
+    "purchase_date", "purchase_price", "rating", "condition", "notes", "musicbrainz_release_id",
     "cover_url", "cover_source",
     "source", "created_at",
 )
-TEXT_FIELDS = tuple(field for field in DATA_FIELDS if field not in {"id", "disc_count", "purchase_price"})
+TEXT_FIELDS = tuple(field for field in DATA_FIELDS if field not in {"id", "disc_count", "purchase_price", "rating"})
 
 
 class StorageUnavailableError(RuntimeError):
@@ -97,6 +97,7 @@ def initialize(path: Path | None = None) -> None:
                 title TEXT NOT NULL,
                 disc_count INTEGER NOT NULL DEFAULT 1,
                 purchase_price INTEGER,
+                rating INTEGER NOT NULL DEFAULT 0 CHECK (rating BETWEEN 0 AND 5),
                 created_at TEXT NOT NULL
                 {columns}
             )"""
@@ -105,6 +106,8 @@ def initialize(path: Path | None = None) -> None:
         for field in ("musicbrainz_release_id", "cover_url", "cover_source"):
             if field not in existing:
                 db.execute(f"ALTER TABLE albums ADD COLUMN {field} TEXT NOT NULL DEFAULT ''")
+        if "rating" not in existing:
+            db.execute("ALTER TABLE albums ADD COLUMN rating INTEGER NOT NULL DEFAULT 0 CHECK (rating BETWEEN 0 AND 5)")
         db.execute(
             """CREATE TABLE IF NOT EXISTS tracks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -338,12 +341,13 @@ def import_csv(data: bytes, path: Path | None = None) -> tuple[int, list[str]]:
             if not (row.get("title") or "").strip():
                 raise ValueError("titleが空です")
             album = AlbumDraft(
-                **{key: value for key, value in row.items() if key in AlbumDraft.model_fields and key not in {"artists", "composers", "performers", "disc_count", "purchase_price"}},
+                **{key: value for key, value in row.items() if key in AlbumDraft.model_fields and key not in {"artists", "composers", "performers", "disc_count", "purchase_price", "rating"}},
                 artists=[v.strip() for v in (row.get("artists") or "").split(";") if v.strip()],
                 composers=[v.strip() for v in (row.get("composers") or "").split(";") if v.strip()],
                 performers=[v.strip() for v in (row.get("performers") or "").split(";") if v.strip()],
                 disc_count=int(row.get("disc_count") or 1),
                 purchase_price=int(row["purchase_price"]) if row.get("purchase_price") else None,
+                rating=int(row.get("rating") or 0),
             )
             add_album(album, "csv", path)
             added += 1
