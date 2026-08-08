@@ -177,7 +177,7 @@ def album_fields(prefix: str, draft: AlbumDraft) -> dict:
 
 st.title("💿 わたしの音盤棚")
 st.caption("CD・SACDを、見つけやすく、重複なく。国内盤も輸入盤もまとめて管理。")
-st.caption("アプリ版: 0.6.5（お気に入り曲抽出対応版）")
+st.caption("アプリ版: 0.6.6（全収録曲検索対応版）")
 
 
 def duration_text(milliseconds) -> str:
@@ -303,8 +303,8 @@ if album_param:
     st.link_button("音盤棚へ戻る", st.context.url)
     st.stop()
 
-tab_add, tab_shelf, tab_favorites, tab_import, tab_settings = st.tabs(
-    ["音盤を登録", "音盤棚", "お気に入り曲", "一括登録", "設定"]
+tab_add, tab_shelf, tab_track_search, tab_favorites, tab_import, tab_settings = st.tabs(
+    ["音盤を登録", "音盤棚", "楽曲検索", "お気に入り曲", "一括登録", "設定"]
 )
 
 with tab_add:
@@ -550,6 +550,74 @@ with tab_shelf:
                 st.rerun()
     else:
         st.info("条件に合う音盤はありません。")
+
+with tab_track_search:
+    st.subheader("全アルバムの収録曲を検索")
+    st.caption("曲名、アルバム、アーティスト、演者、作曲者、レーベル、規格品番、ISRCを横断検索します。")
+    with st.form("global_track_search_form"):
+        track_query_input = st.text_input(
+            "検索語",
+            value=st.session_state.get("global_track_query", ""),
+            placeholder="例: Mozart、ピアノ、Blue Note、ABC-123",
+        )
+        track_search_clicked = st.form_submit_button("全楽曲から検索", type="primary")
+    if track_search_clicked:
+        st.session_state.global_track_query = track_query_input.strip()
+
+    track_query = st.session_state.get("global_track_query", "").strip()
+    if track_query:
+        with st.spinner("全収録曲を検索中…"):
+            searchable_tracks = list_all_tracks()
+        terms = [term.casefold() for term in track_query.split() if term]
+        search_fields = (
+            "track_title", "track_artists", "performers", "composers", "album_title",
+            "album_artists", "label", "catalog_number", "barcode", "isrc",
+        )
+        matched_tracks = [
+            row for row in searchable_tracks
+            if all(
+                any(term in str(row.get(field, "")).casefold() for field in search_fields)
+                for term in terms
+            )
+        ]
+        st.metric("検索結果", f"{len(matched_tracks):,}曲")
+        if matched_tracks:
+            result_display = pd.DataFrame([
+                {
+                    "お気に入り度": "★" * int(row.get("rating") or 0),
+                    "アルバム": row.get("album_title", ""),
+                    "収録曲": f"{st.context.url}?album={row.get('album_id')}",
+                    "Disc": row.get("disc_number", 1),
+                    "No.": row.get("track_number", ""),
+                    "曲名": row.get("track_title", ""),
+                    "アーティスト": row.get("track_artists", ""),
+                    "演者": row.get("performers", ""),
+                    "作曲者等": row.get("composers", ""),
+                    "時間": duration_text(row.get("duration_ms")),
+                    "レーベル": row.get("label", ""),
+                    "規格品番": row.get("catalog_number", ""),
+                    "ISRC": row.get("isrc", ""),
+                }
+                for row in matched_tracks
+            ])
+            st.dataframe(
+                result_display,
+                hide_index=True,
+                width="stretch",
+                column_config={
+                    "収録曲": st.column_config.LinkColumn("アルバム詳細", display_text="開く"),
+                },
+            )
+            st.download_button(
+                f"検索結果CSVを書き出す（{len(matched_tracks):,}曲）",
+                export_tracks_csv(matched_tracks).encode("utf-8-sig"),
+                file_name="track_search_results.csv",
+                mime="text/csv",
+            )
+        else:
+            st.info("検索語に一致する曲はありません。表記を短くして再検索してください。")
+    else:
+        st.info("検索語を入力して「全楽曲から検索」を押してください。")
 
 with tab_favorites:
     st.subheader("お気に入り曲からプレイリスト候補を作る")
