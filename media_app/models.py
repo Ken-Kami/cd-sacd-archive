@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 MEDIA_TYPES = ["CD", "SACD", "SACD Hybrid", "Blu-ray Audio", "その他"]
 ORIGINS = ["国内盤", "輸入盤", "不明"]
-GENRES = ["クラシック", "ジャズ", "ロック／ポップス", "邦楽", "映画音楽", "その他"]
+GENRES = ["ポップス", "ロック", "R&B", "ジャズ", "クラシック", "サウンドトラック"]
 
 
 class AlbumDraft(BaseModel):

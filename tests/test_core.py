@@ -4,7 +4,7 @@ from io import BytesIO
 import zxingcpp
 from PIL import Image
 
-from media_app.models import AlbumDraft, TrackDraft, join_people, split_people
+from media_app.models import AlbumDraft, GENRES, TrackDraft, join_people, split_people
 from media_app import recognition, storage
 from media_app.recognition import barcode_from_image, barcode_is_valid, normalize_barcode
 from media_app.storage import add_album, delete_album, duplicate_candidates, export_tracks_csv, initialize, list_albums, list_all_tracks, list_tracks, replace_tracks, update_album, update_track_ratings
@@ -29,6 +29,7 @@ def test_barcode_from_photo_like_image() -> None:
 def test_people_helpers() -> None:
     assert split_people("A ; B；C") == ["A", "B", "C"]
     assert join_people(["A", "B"]) == "A ; B"
+    assert GENRES == ["ポップス", "ロック", "R&B", "ジャズ", "クラシック", "サウンドトラック"]
 
 
 def test_storage_round_trip(tmp_path: Path) -> None:
