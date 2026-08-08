@@ -177,7 +177,7 @@ def album_fields(prefix: str, draft: AlbumDraft) -> dict:
 
 st.title("💿 わたしの音盤棚")
 st.caption("CD・SACDを、見つけやすく、重複なく。国内盤も輸入盤もまとめて管理。")
-st.caption("アプリ版: 0.6.4（一覧からジャンル編集対応版）")
+st.caption("アプリ版: 0.6.5（お気に入り曲抽出対応版）")
 
 
 def duration_text(milliseconds) -> str:
@@ -303,7 +303,9 @@ if album_param:
     st.link_button("音盤棚へ戻る", st.context.url)
     st.stop()
 
-tab_add, tab_shelf, tab_import, tab_settings = st.tabs(["音盤を登録", "音盤棚", "一括登録", "設定"])
+tab_add, tab_shelf, tab_favorites, tab_import, tab_settings = st.tabs(
+    ["音盤を登録", "音盤棚", "お気に入り曲", "一括登録", "設定"]
+)
 
 with tab_add:
     left, right = st.columns([0.8, 1.6], gap="large")
@@ -548,6 +550,50 @@ with tab_shelf:
                 st.rerun()
     else:
         st.info("条件に合う音盤はありません。")
+
+with tab_favorites:
+    st.subheader("お気に入り曲からプレイリスト候補を作る")
+    track_rating_labels = {1: "★", 2: "★★", 3: "★★★", 4: "★★★★", 5: "★★★★★"}
+    selected_track_ratings = st.multiselect(
+        "抽出するお気に入り度",
+        options=list(track_rating_labels),
+        default=[4, 5],
+        format_func=lambda value: track_rating_labels[value],
+        help="複数の星を同時に選択できます。未評価の曲は抽出対象外です。",
+    )
+    all_favorite_candidates = list_all_tracks()
+    favorite_tracks = [
+        row for row in all_favorite_candidates
+        if int(row.get("rating") or 0) in selected_track_ratings
+    ]
+    st.metric("抽出した楽曲", f"{len(favorite_tracks):,}曲")
+    if favorite_tracks:
+        favorite_display = pd.DataFrame([
+            {
+                "お気に入り度": track_rating_labels[int(row.get("rating") or 0)],
+                "アルバム": row.get("album_title", ""),
+                "Disc": row.get("disc_number", 1),
+                "No.": row.get("track_number", ""),
+                "曲名": row.get("track_title", ""),
+                "アーティスト": row.get("track_artists", ""),
+                "演者": row.get("performers", ""),
+                "作曲者等": row.get("composers", ""),
+                "時間": duration_text(row.get("duration_ms")),
+                "レーベル": row.get("label", ""),
+            }
+            for row in favorite_tracks
+        ])
+        st.dataframe(favorite_display, hide_index=True, width="stretch")
+        st.download_button(
+            f"プレイリスト候補CSVを書き出す（{len(favorite_tracks):,}曲）",
+            export_tracks_csv(favorite_tracks).encode("utf-8-sig"),
+            file_name="favorite_track_playlist_candidates.csv",
+            mime="text/csv",
+        )
+    elif selected_track_ratings:
+        st.info("選択したお気に入り度に該当する曲はありません。")
+    else:
+        st.info("抽出するお気に入り度を1つ以上選択してください。")
 
 with tab_import:
     st.subheader("CSVから一括登録")
