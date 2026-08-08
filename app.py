@@ -177,7 +177,7 @@ def album_fields(prefix: str, draft: AlbumDraft) -> dict:
 
 st.title("💿 わたしの音盤棚")
 st.caption("CD・SACDを、見つけやすく、重複なく。国内盤も輸入盤もまとめて管理。")
-st.caption("アプリ版: 0.6.6（全収録曲検索対応版）")
+st.caption("アプリ版: 0.6.7（楽曲検索入力同期修正版）")
 
 
 def duration_text(milliseconds) -> str:
@@ -554,17 +554,12 @@ with tab_shelf:
 with tab_track_search:
     st.subheader("全アルバムの収録曲を検索")
     st.caption("曲名、アルバム、アーティスト、演者、作曲者、レーベル、規格品番、ISRCを横断検索します。")
-    with st.form("global_track_search_form"):
-        track_query_input = st.text_input(
-            "検索語",
-            value=st.session_state.get("global_track_query", ""),
-            placeholder="例: Mozart、ピアノ、Blue Note、ABC-123",
-        )
-        track_search_clicked = st.form_submit_button("全楽曲から検索", type="primary")
-    if track_search_clicked:
-        st.session_state.global_track_query = track_query_input.strip()
-
-    track_query = st.session_state.get("global_track_query", "").strip()
+    track_query = st.text_input(
+        "検索語",
+        placeholder="例: Mozart、ピアノ、Blue Note、ABC-123",
+        key="global_track_query",
+        help="入力後にEnterを1回押すと、表示中の検索語ですぐに検索します。",
+    ).strip()
     if track_query:
         with st.spinner("全収録曲を検索中…"):
             searchable_tracks = list_all_tracks()
