@@ -62,6 +62,7 @@ def test_tracks_round_trip(tmp_path: Path) -> None:
     assert list_tracks(album_id, path)[0]["rating"] == 5
     all_tracks = list_all_tracks(path)
     assert all_tracks[0]["album_title"] == "曲目テスト"
+    assert all_tracks[0]["rating"] == 5
     exported = export_tracks_csv(all_tracks)
     assert "track_title" in exported
     assert "第1楽章" in exported
