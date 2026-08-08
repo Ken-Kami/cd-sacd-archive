@@ -176,7 +176,7 @@ def album_fields(prefix: str, draft: AlbumDraft) -> dict:
 
 st.title("💿 わたしの音盤棚")
 st.caption("CD・SACDを、見つけやすく、重複なく。国内盤も輸入盤もまとめて管理。")
-st.caption("アプリ版: 0.6.1（お気に入り度対応版）")
+st.caption("アプリ版: 0.6.2（一覧からお気に入り度編集対応版）")
 
 
 def duration_text(milliseconds) -> str:
@@ -434,18 +434,45 @@ with tab_shelf:
             "track_link": "収録曲",
             "cover_url": "ジャケット",
         })
+        rating_options = ["未評価", "★", "★★", "★★★", "★★★★", "★★★★★"]
         if "お気に入り度" in display:
-            display["お気に入り度"] = display["お気に入り度"].apply(lambda value: "★" * int(value or 0))
+            display["お気に入り度"] = display["お気に入り度"].apply(
+                lambda value: rating_options[int(value or 0)]
+            )
         preferred = ["ID", "ジャケット", "アルバム", "お気に入り度", "収録曲", "アーティスト", "作曲家", "演奏者", "レーベル", "規格品番", "盤種", "枚数", "国内／輸入", "発売国", "発売年", "ジャンル", "保管場所"]
-        st.dataframe(
-            display[[column for column in preferred if column in display]],
+        shelf_columns = [column for column in preferred if column in display]
+        st.caption("お気に入り度のセルをクリックすると、一覧のまま星を選択できます。")
+        edited_shelf = st.data_editor(
+            display[shelf_columns],
             hide_index=True,
             width="stretch",
+            disabled=[column for column in shelf_columns if column != "お気に入り度"],
             column_config={
                 "収録曲": st.column_config.LinkColumn("収録曲", display_text="別タブで見る"),
                 "ジャケット": st.column_config.ImageColumn("ジャケット", width="small"),
+                "お気に入り度": st.column_config.SelectboxColumn(
+                    "お気に入り度", options=rating_options, required=True, width="medium"
+                ),
             },
+            key="shelf_rating_editor",
         )
+        if st.button("一覧のお気に入り度を保存", type="primary"):
+            rows_by_id = {int(row["id"]): row for row in filtered}
+            changed = 0
+            for _, edited_row in edited_shelf.iterrows():
+                album_id = int(edited_row["ID"])
+                selected_rating = rating_options.index(edited_row["お気に入り度"])
+                original = rows_by_id[album_id]
+                if selected_rating != int(original.get("rating") or 0):
+                    album = album_from_row(original)
+                    album.rating = selected_rating
+                    update_album(album_id, album)
+                    changed += 1
+            if changed:
+                st.success(f"{changed}件のお気に入り度を更新しました。")
+                st.rerun()
+            else:
+                st.info("お気に入り度の変更はありません。")
         st.download_button("CSVを書き出す", export_csv(filtered).encode("utf-8-sig"), "cd_sacd_collection.csv", "text/csv")
         all_track_rows = list_all_tracks()
         if all_track_rows:
