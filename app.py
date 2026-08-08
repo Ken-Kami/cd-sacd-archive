@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import unicodedata
 
 import pandas as pd
 import streamlit as st
@@ -177,7 +178,7 @@ def album_fields(prefix: str, draft: AlbumDraft) -> dict:
 
 st.title("💿 わたしの音盤棚")
 st.caption("CD・SACDを、見つけやすく、重複なく。国内盤も輸入盤もまとめて管理。")
-st.caption("アプリ版: 0.6.7（楽曲検索入力同期修正版）")
+st.caption("アプリ版: 0.6.8（楽曲フレーズ検索対応版）")
 
 
 def duration_text(milliseconds) -> str:
@@ -185,6 +186,13 @@ def duration_text(milliseconds) -> str:
         return ""
     total_seconds = round(int(milliseconds) / 1000)
     return f"{total_seconds // 60}:{total_seconds % 60:02d}"
+
+
+def normalize_search_text(value: str) -> str:
+    """全半角と空白を揃え、検索語の外側の引用符を除く。"""
+    normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    normalized = " ".join(normalized.split())
+    return normalized.strip(" \"'“”‘’")
 
 
 album_param = st.query_params.get("album")
@@ -560,21 +568,43 @@ with tab_track_search:
         key="global_track_query",
         help="入力後にEnterを1回押すと、表示中の検索語ですぐに検索します。",
     ).strip()
+    track_search_mode = st.radio(
+        "検索方法",
+        ["フレーズ一致", "すべての語を含む"],
+        horizontal=True,
+        help=(
+            "フレーズ一致は『I feel』のような語順のまま、1つの項目内で探します。"
+            "「すべての語を含む」は、語が曲名・演者など別々の項目にあっても一致します。"
+        ),
+        key="global_track_search_mode",
+    )
     if track_query:
         with st.spinner("全収録曲を検索中…"):
             searchable_tracks = list_all_tracks()
-        terms = [term.casefold() for term in track_query.split() if term]
+        normalized_query = normalize_search_text(track_query)
+        terms = [term for term in normalized_query.split() if term]
         search_fields = (
             "track_title", "track_artists", "performers", "composers", "album_title",
             "album_artists", "label", "catalog_number", "barcode", "isrc",
         )
-        matched_tracks = [
-            row for row in searchable_tracks
-            if all(
-                any(term in str(row.get(field, "")).casefold() for field in search_fields)
-                for term in terms
-            )
-        ]
+        if track_search_mode == "フレーズ一致":
+            matched_tracks = [
+                row for row in searchable_tracks
+                if any(
+                    normalized_query in normalize_search_text(row.get(field, ""))
+                    for field in search_fields
+                )
+            ]
+            st.caption(f"検索条件: 「{normalized_query}」が同じ項目内に連続して含まれる曲")
+        else:
+            matched_tracks = [
+                row for row in searchable_tracks
+                if all(
+                    any(term in normalize_search_text(row.get(field, "")) for field in search_fields)
+                    for term in terms
+                )
+            ]
+            st.caption("検索条件: 空白で区切ったすべての語を、全項目から検索")
         st.metric("検索結果", f"{len(matched_tracks):,}曲")
         if matched_tracks:
             result_display = pd.DataFrame([
