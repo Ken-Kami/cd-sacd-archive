@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS public.albums (
     location TEXT NOT NULL DEFAULT '',
     purchase_date TEXT NOT NULL DEFAULT '',
     purchase_price INTEGER CHECK (purchase_price IS NULL OR purchase_price >= 0),
+    rating INTEGER NOT NULL DEFAULT 0 CHECK (rating BETWEEN 0 AND 5),
     condition TEXT NOT NULL DEFAULT '',
     notes TEXT NOT NULL DEFAULT '',
     musicbrainz_release_id TEXT NOT NULL DEFAULT '',
@@ -51,6 +52,7 @@ ALTER TABLE public.tracks ENABLE ROW LEVEL SECURITY;
 -- 既にalbumsテーブルを作成済みの場合の安全な追加。
 ALTER TABLE public.albums ADD COLUMN IF NOT EXISTS cover_url TEXT NOT NULL DEFAULT '';
 ALTER TABLE public.albums ADD COLUMN IF NOT EXISTS cover_source TEXT NOT NULL DEFAULT '';
+ALTER TABLE public.albums ADD COLUMN IF NOT EXISTS rating INTEGER NOT NULL DEFAULT 0 CHECK (rating BETWEEN 0 AND 5);
 
 -- このアプリはStreamlit Secretsのservice_roleキーでアクセスします。
 -- service_roleはRLSをバイパスするため、公開クライアントへ絶対に渡さないでください。

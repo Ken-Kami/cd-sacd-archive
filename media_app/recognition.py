@@ -86,7 +86,7 @@ def extract_album_package_with_ai(images: list[tuple[bytes, str]]) -> AlbumLooku
 - disc_count: 明確に確認できるディスク枚数。不明なら1
 - origin: 「国内盤」「輸入盤」「不明」のいずれか
 - country、release_year、genre、recording_formatも画像から確認できる場合のみ入力
-- location、purchase_date、purchase_price、condition、notesは空のまま
+- location、purchase_date、purchase_price、rating、condition、notesは空または0のまま
 - 裏面やブックレットに曲目が写っていれば、tracksへディスク番号、曲順、曲名、演者、
   作曲者、時間を、画像で確認できる範囲だけ入力
 
@@ -387,7 +387,7 @@ def merge_album_missing(existing: AlbumDraft, found: AlbumDraft) -> AlbumDraft:
     values = existing.model_dump()
     for field in AlbumDraft.model_fields:
         current, incoming = values.get(field), getattr(found, field)
-        if field in {"location", "purchase_date", "purchase_price", "condition", "notes"}:
+        if field in {"location", "purchase_date", "purchase_price", "rating", "condition", "notes"}:
             continue
         if field == "disc_count":
             if int(current or 1) == 1 and int(incoming or 1) > 1:

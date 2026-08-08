@@ -34,8 +34,9 @@ def test_people_helpers() -> None:
 def test_storage_round_trip(tmp_path: Path) -> None:
     path = tmp_path / "collection.db"
     initialize(path)
-    album_id = add_album(AlbumDraft(title="交響曲集", artists=["管弦楽団"], catalog_number="ABC-1", disc_count=2), path=path)
+    album_id = add_album(AlbumDraft(title="交響曲集", artists=["管弦楽団"], catalog_number="ABC-1", disc_count=2, rating=5), path=path)
     assert list_albums("管弦楽団", path)[0]["disc_count"] == 2
+    assert list_albums("管弦楽団", path)[0]["rating"] == 5
     assert len(duplicate_candidates(catalog_number="abc-1", path=path)) == 1
     update_album(album_id, AlbumDraft(title="交響曲全集", media_type="SACD"), path)
     assert list_albums("全集", path)[0]["media_type"] == "SACD"
@@ -127,11 +128,11 @@ def test_cover_art_prefers_front_large_thumbnail(monkeypatch) -> None:
 def test_metadata_merge_preserves_saved_and_personal_fields() -> None:
     saved = AlbumDraft(
         title="手入力タイトル", catalog_number="ABC-1", location="棚A",
-        purchase_date="2026-08-08", purchase_price=3000, condition="帯あり", notes="初版",
+        purchase_date="2026-08-08", purchase_price=3000, rating=4, condition="帯あり", notes="初版",
     )
     found = AlbumDraft(
         title="検索タイトル", artists=["Artist"], label="Label", catalog_number="OTHER",
-        location="上書き不可", purchase_price=1, notes="上書き不可",
+        location="上書き不可", purchase_price=1, rating=1, notes="上書き不可",
         cover_url="https://example.com/cover.jpg",
     )
     merged = recognition.merge_album_missing(saved, found)
@@ -141,5 +142,6 @@ def test_metadata_merge_preserves_saved_and_personal_fields() -> None:
     assert merged.label == "Label"
     assert merged.location == "棚A"
     assert merged.purchase_price == 3000
+    assert merged.rating == 4
     assert merged.notes == "初版"
     assert merged.cover_url == "https://example.com/cover.jpg"

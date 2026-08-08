@@ -105,6 +105,7 @@ def set_draft(album: AlbumDraft, source: str) -> None:
         "new_location": album.location,
         "new_purchase_date": album.purchase_date,
         "new_price": album.purchase_price or 0,
+        "new_rating": album.rating,
         "new_condition": album.condition,
         "new_notes": album.notes,
     }
@@ -117,6 +118,7 @@ def album_from_row(row: dict) -> AlbumDraft:
         values[field] = split_people(str(values.get(field) or ""))
     values["disc_count"] = int(values.get("disc_count") or 1)
     values["purchase_price"] = values.get("purchase_price") or None
+    values["rating"] = int(values.get("rating") or 0)
     return AlbumDraft(**values)
 
 
@@ -149,6 +151,14 @@ def album_fields(prefix: str, draft: AlbumDraft) -> dict:
     purchase_date = c12.text_input("購入日", value=draft.purchase_date, placeholder="YYYY-MM-DD", key=f"{prefix}_purchase_date")
     purchase_price = c13.number_input("購入価格（円）", min_value=0, value=draft.purchase_price or 0, step=100, key=f"{prefix}_price")
     condition = c14.text_input("状態", value=draft.condition, placeholder="新品／中古／帯あり等", key=f"{prefix}_condition")
+    rating_labels = ["未評価", "★", "★★", "★★★", "★★★★", "★★★★★"]
+    rating = st.selectbox(
+        "お気に入り度",
+        options=range(6),
+        index=int(draft.rating),
+        format_func=lambda value: rating_labels[value],
+        key=f"{prefix}_rating",
+    )
     notes = st.text_area("メモ", value=draft.notes, key=f"{prefix}_notes")
     return dict(
         title=title, title_original=title_original, artists=split_people(artists),
@@ -156,7 +166,7 @@ def album_fields(prefix: str, draft: AlbumDraft) -> dict:
         catalog_number=catalog_number, barcode=normalize_barcode(barcode), media_type=media_type,
         disc_count=int(disc_count), origin=origin, country=country, release_year=release_year,
         genre=genre, recording_format=recording_format, location=location,
-        purchase_date=purchase_date, purchase_price=int(purchase_price) or None,
+        purchase_date=purchase_date, purchase_price=int(purchase_price) or None, rating=int(rating),
         condition=condition, notes=notes,
         musicbrainz_release_id=draft.musicbrainz_release_id,
         cover_url=draft.cover_url,
@@ -166,7 +176,7 @@ def album_fields(prefix: str, draft: AlbumDraft) -> dict:
 
 st.title("💿 わたしの音盤棚")
 st.caption("CD・SACDを、見つけやすく、重複なく。国内盤も輸入盤もまとめて管理。")
-st.caption("アプリ版: 0.6.0（段階的メタデータ検索対応版）")
+st.caption("アプリ版: 0.6.1（お気に入り度対応版）")
 
 
 def duration_text(milliseconds) -> str:
@@ -187,6 +197,8 @@ if album_param:
         st.stop()
     st.header(detail_album["title"])
     st.caption(" / ".join(filter(None, [detail_album.get("artists", ""), detail_album.get("label", ""), detail_album.get("catalog_number", "")])))
+    if int(detail_album.get("rating") or 0):
+        st.markdown(f"お気に入り度: {'★' * int(detail_album['rating'])}{'☆' * (5 - int(detail_album['rating']))}")
     if detail_album.get("cover_url"):
         st.image(detail_album["cover_url"], width=420, caption=detail_album.get("cover_source") or "アルバムジャケット")
     elif detail_album.get("musicbrainz_release_id") or detail_album.get("barcode"):
@@ -418,10 +430,13 @@ with tab_shelf:
             "performers": "演奏者", "label": "レーベル", "catalog_number": "規格品番",
             "barcode": "バーコード", "media_type": "盤種", "disc_count": "枚数", "origin": "国内／輸入",
             "country": "発売国", "release_year": "発売年", "genre": "ジャンル", "location": "保管場所",
+            "rating": "お気に入り度",
             "track_link": "収録曲",
             "cover_url": "ジャケット",
         })
-        preferred = ["ID", "ジャケット", "アルバム", "収録曲", "アーティスト", "作曲家", "演奏者", "レーベル", "規格品番", "盤種", "枚数", "国内／輸入", "発売国", "発売年", "ジャンル", "保管場所"]
+        if "お気に入り度" in display:
+            display["お気に入り度"] = display["お気に入り度"].apply(lambda value: "★" * int(value or 0))
+        preferred = ["ID", "ジャケット", "アルバム", "お気に入り度", "収録曲", "アーティスト", "作曲家", "演奏者", "レーベル", "規格品番", "盤種", "枚数", "国内／輸入", "発売国", "発売年", "ジャンル", "保管場所"]
         st.dataframe(
             display[[column for column in preferred if column in display]],
             hide_index=True,
