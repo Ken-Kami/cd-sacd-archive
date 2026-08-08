@@ -7,7 +7,7 @@ from PIL import Image
 from media_app.models import AlbumDraft, TrackDraft, join_people, split_people
 from media_app import recognition, storage
 from media_app.recognition import barcode_from_image, barcode_is_valid, normalize_barcode
-from media_app.storage import add_album, delete_album, duplicate_candidates, export_tracks_csv, initialize, list_albums, list_all_tracks, list_tracks, replace_tracks, update_album
+from media_app.storage import add_album, delete_album, duplicate_candidates, export_tracks_csv, initialize, list_albums, list_all_tracks, list_tracks, replace_tracks, update_album, update_track_ratings
 
 
 def test_barcode_helpers() -> None:
@@ -56,12 +56,16 @@ def test_tracks_round_trip(tmp_path: Path) -> None:
     tracks = list_tracks(album_id, path)
     assert tracks[0]["title"] == "第1楽章"
     assert tracks[0]["duration_ms"] == 125000
+    assert tracks[0]["rating"] == 0
+    update_track_ratings({tracks[0]["id"]: 5}, path)
+    assert list_tracks(album_id, path)[0]["rating"] == 5
     all_tracks = list_all_tracks(path)
     assert all_tracks[0]["album_title"] == "曲目テスト"
     exported = export_tracks_csv(all_tracks)
     assert "track_title" in exported
     assert "第1楽章" in exported
     assert "2:05" in exported
+    assert "rating" in exported
 
 
 def test_supabase_album_and_tracks(monkeypatch) -> None:

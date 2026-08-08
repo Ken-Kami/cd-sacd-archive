@@ -49,6 +49,7 @@ from media_app.storage import (
     using_supabase,
     update_album,
     update_album_cover,
+    update_track_ratings,
 )
 
 
@@ -176,7 +177,7 @@ def album_fields(prefix: str, draft: AlbumDraft) -> dict:
 
 st.title("💿 わたしの音盤棚")
 st.caption("CD・SACDを、見つけやすく、重複なく。国内盤も輸入盤もまとめて管理。")
-st.caption("アプリ版: 0.6.2（一覧からお気に入り度編集対応版）")
+st.caption("アプリ版: 0.6.3（収録曲のお気に入り度対応版）")
 
 
 def duration_text(milliseconds) -> str:
@@ -234,16 +235,46 @@ if album_param:
         except Exception as exc:
             st.error(f"情報の再取得に失敗しました: {exc}")
     if detail_tracks:
+        track_rating_options = ["未評価", "★", "★★", "★★★", "★★★★", "★★★★★"]
         track_display = pd.DataFrame([
             {
+                "ID": row["id"],
                 "Disc": row["disc_number"], "No.": row["track_number"], "曲名": row["title"],
+                "お気に入り度": track_rating_options[int(row.get("rating") or 0)],
                 "アーティスト": row["artists"], "演者": row["performers"],
                 "作曲者等": row["composers"], "時間": duration_text(row["duration_ms"]),
                 "ISRC": row["isrc"],
             }
             for row in detail_tracks
         ])
-        st.dataframe(track_display, hide_index=True, width="stretch")
+        st.caption("各曲のお気に入り度を選び、一覧の下にある保存ボタンを押してください。")
+        edited_tracks = st.data_editor(
+            track_display,
+            hide_index=True,
+            width="stretch",
+            disabled=[column for column in track_display.columns if column != "お気に入り度"],
+            column_config={
+                "ID": None,
+                "お気に入り度": st.column_config.SelectboxColumn(
+                    "お気に入り度", options=track_rating_options, required=True, width="medium"
+                ),
+            },
+            key=f"track_rating_editor_{album_param}",
+        )
+        if st.button("収録曲のお気に入り度を保存", type="primary"):
+            original_ratings = {int(row["id"]): int(row.get("rating") or 0) for row in detail_tracks}
+            changed_ratings = {}
+            for _, edited_row in edited_tracks.iterrows():
+                track_id = int(edited_row["ID"])
+                rating = track_rating_options.index(edited_row["お気に入り度"])
+                if rating != original_ratings[track_id]:
+                    changed_ratings[track_id] = rating
+            if changed_ratings:
+                update_track_ratings(changed_ratings)
+                st.success(f"{len(changed_ratings)}曲のお気に入り度を更新しました。")
+                st.rerun()
+            else:
+                st.info("お気に入り度の変更はありません。")
         st.metric("収録曲数", len(detail_tracks))
         album_track_rows = [dict(row, album_id=detail_album["id"], album_title=detail_album["title"], album_artists=detail_album.get("artists", ""), label=detail_album.get("label", ""), catalog_number=detail_album.get("catalog_number", ""), barcode=detail_album.get("barcode", ""), media_type=detail_album.get("media_type", ""), release_year=detail_album.get("release_year", ""), track_title=row["title"], track_artists=row["artists"]) for row in detail_tracks]
         st.download_button(

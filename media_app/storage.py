@@ -120,9 +120,13 @@ def initialize(path: Path | None = None) -> None:
                 composers TEXT NOT NULL DEFAULT '',
                 duration_ms INTEGER,
                 isrc TEXT NOT NULL DEFAULT '',
+                rating INTEGER NOT NULL DEFAULT 0 CHECK (rating BETWEEN 0 AND 5),
                 FOREIGN KEY(album_id) REFERENCES albums(id) ON DELETE CASCADE
             )"""
         )
+        track_columns = {row[1] for row in db.execute("PRAGMA table_info(tracks)")}
+        if "rating" not in track_columns:
+            db.execute("ALTER TABLE tracks ADD COLUMN rating INTEGER NOT NULL DEFAULT 0 CHECK (rating BETWEEN 0 AND 5)")
         db.execute("CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album_id, disc_number, id)")
         for field in ("barcode", "catalog_number", "title", "artists", "label"):
             db.execute(f"CREATE INDEX IF NOT EXISTS idx_albums_{field} ON albums({field})")
@@ -223,13 +227,32 @@ def replace_tracks(album_id: int, tracks: list[TrackDraft], path: Path | None = 
         db.executemany(
             """INSERT INTO tracks
                (album_id, disc_number, track_number, title, artists, performers,
-                composers, duration_ms, isrc)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                composers, duration_ms, isrc, rating)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             [
                 (album_id, item.disc_number, item.track_number, item.title, item.artists,
-                 item.performers, item.composers, item.duration_ms, item.isrc)
+                 item.performers, item.composers, item.duration_ms, item.isrc, item.rating)
                 for item in tracks
             ],
+        )
+
+
+def update_track_ratings(ratings: dict[int, int], path: Path | None = None) -> None:
+    """曲IDごとのお気に入り度をまとめて保存する。"""
+    normalized = {int(track_id): max(0, min(5, int(rating))) for track_id, rating in ratings.items()}
+    if not normalized:
+        return
+    if path is None and using_supabase():
+        for track_id, rating in normalized.items():
+            _supabase_request(
+                "PATCH", "tracks", params={"id": f"eq.{track_id}"},
+                json={"rating": rating}, prefer="return=minimal",
+            )
+        return
+    with connect(path) as db:
+        db.executemany(
+            "UPDATE tracks SET rating = ? WHERE id = ?",
+            [(rating, track_id) for track_id, rating in normalized.items()],
         )
 
 
@@ -273,7 +296,8 @@ def list_all_tracks(path: Path | None = None) -> list[dict]:
                     tracks.performers,
                     tracks.composers,
                     tracks.duration_ms,
-                    tracks.isrc
+                    tracks.isrc,
+                    tracks.rating
                 FROM tracks
                 JOIN albums ON albums.id = tracks.album_id
                 ORDER BY albums.id, tracks.disc_number, tracks.id"""
@@ -286,7 +310,7 @@ def export_tracks_csv(rows: list[dict]) -> str:
         "album_id", "album_title", "album_artists", "label", "catalog_number",
         "barcode", "media_type", "release_year", "disc_number", "track_number",
         "track_title", "track_artists", "performers", "composers", "duration",
-        "duration_ms", "isrc",
+        "duration_ms", "isrc", "rating",
     )
     output = StringIO()
     writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
