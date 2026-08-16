@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import time
 import unicodedata
 
 import pandas as pd
@@ -10,8 +11,10 @@ import streamlit as st
 # Streamlit Cloudのホット更新でapp.pyだけが再実行されても、関連モジュールを
 # GitHub上の最新版へ揃える。複数ファイル更新時の古いimportキャッシュを防ぐ。
 from media_app import models as _models
+from media_app import auth as _auth
 
 _models = importlib.reload(_models)
+_auth = importlib.reload(_auth)
 from media_app import recognition as _recognition
 from media_app import storage as _storage
 
@@ -19,6 +22,7 @@ _recognition = importlib.reload(_recognition)
 _storage = importlib.reload(_storage)
 
 from media_app.models import AlbumDraft, GENRES, MEDIA_TYPES, ORIGINS, split_people
+from media_app.auth import auth_ready, refresh_session, sign_in, sign_out, sign_up
 from media_app.recognition import (
     api_key,
     barcode_from_image,
@@ -45,6 +49,7 @@ from media_app.storage import (
     list_all_tracks,
     list_albums,
     replace_tracks,
+    set_auth_session,
     storage_description,
     StorageUnavailableError,
     using_supabase,
@@ -56,12 +61,74 @@ from media_app.storage import (
 
 st.set_page_config(page_title="わたしの音盤棚", page_icon="💿", layout="wide")
 try:
-    for secret_name in ("OPENAI_API_KEY", "OPENAI_VISION_MODEL", "DISCOGS_USER_TOKEN", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"):
+    for secret_name in ("OPENAI_API_KEY", "OPENAI_VISION_MODEL", "DISCOGS_USER_TOKEN", "SUPABASE_URL", "SUPABASE_KEY", "SUPABASE_ANON_KEY"):
         secret_value = st.secrets.get(secret_name, "")
         if secret_value and not os.getenv(secret_name):
             os.environ[secret_name] = str(secret_value)
 except FileNotFoundError:
     pass
+
+
+def auth_page() -> None:
+    st.title("💿 わたしの音盤棚")
+    st.caption("登録した音盤は、ログインしたご本人だけが閲覧できます。")
+    _, center, _ = st.columns([1, 1.2, 1])
+    with center:
+        login_tab, signup_tab = st.tabs(["ログイン", "新規登録"])
+        with login_tab:
+            with st.form("login_form"):
+                email = st.text_input("メールアドレス")
+                password = st.text_input("パスワード", type="password")
+                submitted = st.form_submit_button("ログイン", type="primary", width="stretch")
+            if submitted:
+                try:
+                    st.session_state.auth = sign_in(email.strip(), password)
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"ログインできませんでした: {exc}")
+        with signup_tab:
+            st.caption("初回のみアカウントを作成します。パスワードは8文字以上にしてください。")
+            with st.form("signup_form"):
+                new_email = st.text_input("メールアドレス", key="signup_email")
+                new_password = st.text_input("パスワード", type="password", key="signup_password")
+                confirmation = st.text_input("パスワード（確認）", type="password")
+                created = st.form_submit_button("アカウントを作成", width="stretch")
+            if created:
+                if len(new_password) < 8:
+                    st.error("パスワードは8文字以上にしてください。")
+                elif new_password != confirmation:
+                    st.error("確認用パスワードが一致しません。")
+                else:
+                    try:
+                        active = sign_up(new_email.strip(), new_password)
+                        if active:
+                            st.success("登録しました。ログインしてください。")
+                        else:
+                            st.success("確認メールを送信しました。メール内のリンクを開いてからログインしてください。")
+                    except Exception as exc:
+                        st.error(f"登録できませんでした: {exc}")
+
+
+supabase_configured = bool(os.getenv("SUPABASE_URL", "").strip())
+if supabase_configured and not auth_ready():
+    st.error("Supabase Authの公開キーが設定されていません。")
+    st.warning("Streamlit CloudのSecretsへSUPABASE_KEY（Publishable keyまたはanon key）を設定してください。")
+    st.stop()
+
+st.session_state.setdefault("auth", None)
+if auth_ready():
+    if not st.session_state.auth:
+        auth_page()
+        st.stop()
+    if int(st.session_state.auth.get("expires_at") or 0) <= int(time.time()) + 60:
+        try:
+            st.session_state.auth = refresh_session(st.session_state.auth)
+        except Exception:
+            st.session_state.auth = None
+            st.warning("ログインの有効期限が切れました。もう一度ログインしてください。")
+            st.rerun()
+    set_auth_session(st.session_state.auth)
+
 try:
     initialize()
 except StorageUnavailableError as exc:
@@ -178,7 +245,15 @@ def album_fields(prefix: str, draft: AlbumDraft) -> dict:
 
 st.title("💿 わたしの音盤棚")
 st.caption("CD・SACDを、見つけやすく、重複なく。国内盤も輸入盤もまとめて管理。")
-st.caption("アプリ版: 0.6.8（楽曲フレーズ検索対応版）")
+st.caption("アプリ版: 0.7.0（Supabase Authログイン対応版）")
+if auth_ready():
+    account, logout = st.columns([5, 1])
+    account.caption(f"ログイン中: {st.session_state.auth.get('email', '')}")
+    if logout.button("ログアウト", width="stretch"):
+        sign_out(st.session_state.auth)
+        st.session_state.auth = None
+        set_auth_session(None)
+        st.rerun()
 
 
 def duration_text(milliseconds) -> str:
@@ -699,6 +774,9 @@ with tab_import:
             st.warning("\n".join(errors[:20]))
 
 with tab_settings:
+    if auth_ready():
+        st.subheader("ログイン")
+        st.success(f"{st.session_state.auth.get('email', '')} でログインしています。")
     st.subheader("保存先")
     st.code(storage_description(), language=None)
     if using_supabase():
