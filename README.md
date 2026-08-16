@@ -69,13 +69,16 @@ Streamlit CloudではSQLiteを使わず、Supabase PostgreSQLへ永続保存し�
 2. `Authentication > Users` から自分のUUIDをコピーします。
 3. `supabase_auth_migration.sql` の `owner_id` を自分のUUIDへ置き換えて実行します。
 4. Project SettingsのAPI KeysからPublishable key（旧形式ではanon key）を取得します。
-5. Streamlit Cloudの `App settings > Secrets` を次へ変更します。
+5. Streamlit Cloudの `App settings > Secrets` へ次を追加します。この時点では旧`SUPABASE_SERVICE_ROLE_KEY`をまだ残します。
 
 ```toml
 SUPABASE_URL = "https://YOUR_PROJECT.supabase.co"
 SUPABASE_KEY = "YOUR_PUBLISHABLE_OR_ANON_KEY"
 ```
 
-`SUPABASE_SERVICE_ROLE_KEY`はSecretsから削除します。アプリはログインユーザーのJWTとRLSを使い、本人のalbums・tracksだけを取得・変更します。
+6. 認証対応版をデプロイし、ログイン後に既存データが見えることを確認します。
+7. 確認後、`SUPABASE_SERVICE_ROLE_KEY`をSecretsから削除します。
+
+認証対応版はログインユーザーのJWTとRLSを使い、本人のalbums・tracksだけを取得・変更します。
 
 自分のアカウント作成後、第三者の新規登録を止める場合はSupabaseのAuthentication設定で新規サインアップを無効にしてください。ログイン済みユーザーには影響しません。
