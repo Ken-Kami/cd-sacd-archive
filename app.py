@@ -134,6 +134,9 @@ try:
 except StorageUnavailableError as exc:
     st.error("Supabaseへ接続できません。")
     st.warning("Streamlit CloudのSecretsと、Supabaseのalbums・tracksテーブルを確認してください。")
+    if auth_ready() and st.session_state.auth:
+        st.info("既存データを初回移行する場合は、次のユーザーUUIDをsupabase_auth_migration.sqlへ設定してください。")
+        st.code(st.session_state.auth.get("user_id", ""), language=None)
     st.caption(str(exc))
     st.stop()
 
@@ -777,6 +780,8 @@ with tab_settings:
     if auth_ready():
         st.subheader("ログイン")
         st.success(f"{st.session_state.auth.get('email', '')} でログインしています。")
+        st.caption("既存データを初回移行するときに使用するユーザーUUID")
+        st.code(st.session_state.auth.get("user_id", ""), language=None)
     st.subheader("保存先")
     st.code(storage_description(), language=None)
     if using_supabase():

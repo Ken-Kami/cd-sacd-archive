@@ -536,10 +536,10 @@ Supabaseではalbums・tracksともRLSを有効化し、`auth.uid() = user_id`�
 ## 本番構成
 
 1.  GitHubの`main`をStreamlit Cloudへ接続する。
-2.  Supabase Authで自分のユーザーを作成する。
-3.  既存プロジェクトではUUIDを指定して`supabase_auth_migration.sql`を実行する。新規プロジェクトでは`supabase_schema.sql`を実行する。
-4.  Streamlit Cloud SecretsへURLとPublishable keyを設定する。
-5.  ログインし、既存アルバム・曲が本人のデータとして表示されることを確認する。
+2.  Streamlit Cloud SecretsへURLとPublishable keyを設定する。
+3.  起動画面の「新規登録」から自分のユーザーを作成してログインする。
+4.  設定タブ、または移行前の接続エラー画面に表示されるUUIDを指定して`supabase_auth_migration.sql`を実行する。新規プロジェクトでは`supabase_schema.sql`を実行する。
+5.  再読み込みし、既存アルバム・曲が本人のデータとして表示されることを確認する。
 
 ## コード更新とデータ保持
 

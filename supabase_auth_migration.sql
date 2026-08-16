@@ -1,6 +1,6 @@
 -- 既存の音盤棚をSupabase Auth + RLSへ移行するスクリプトです。
--- 1. 先にアプリまたはSupabase Dashboardで自分のAuthユーザーを作成します。
--- 2. Authentication > Usersで自分のUUIDをコピーします。
+-- 1. 認証対応版の起動画面で自分のAuthユーザーを新規登録し、ログインします。
+-- 2. アプリの設定タブ、または移行前の接続エラー画面に表示されるユーザーUUIDをコピーします。
 -- 3. 下の owner_id のUUIDを置き換えてから、SQL Editorで全体を実行します。
 
 BEGIN;

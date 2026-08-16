@@ -65,19 +65,20 @@ Streamlit CloudではSQLiteを使わず、Supabase PostgreSQLへ永続保存し�
 
 既存データがあるプロジェクトでは、データを失わないよう次の順序で移行します。
 
-1. Supabase Authenticationで自分のユーザーを作成します。
-2. `Authentication > Users` から自分のUUIDをコピーします。
-3. `supabase_auth_migration.sql` の `owner_id` を自分のUUIDへ置き換えて実行します。
-4. Project SettingsのAPI KeysからPublishable key（旧形式ではanon key）を取得します。
-5. Streamlit Cloudの `App settings > Secrets` へ次を追加します。この時点では旧`SUPABASE_SERVICE_ROLE_KEY`をまだ残します。
+1. Project SettingsのAPI KeysからPublishable key（旧形式ではanon key）を取得します。
+2. Streamlit Cloudの `App settings > Secrets` へ次を追加します。この時点では旧`SUPABASE_SERVICE_ROLE_KEY`をまだ残します。
 
 ```toml
 SUPABASE_URL = "https://YOUR_PROJECT.supabase.co"
 SUPABASE_KEY = "YOUR_PUBLISHABLE_OR_ANON_KEY"
 ```
 
-6. 認証対応版をデプロイし、ログイン後に既存データが見えることを確認します。
-7. 確認後、`SUPABASE_SERVICE_ROLE_KEY`をSecretsから削除します。
+3. 認証対応版をデプロイします。
+4. 起動画面の「新規登録」からメールアドレスとパスワードを登録し、ログインします。
+5. 設定タブ、または移行前の接続エラー画面に表示されるユーザーUUIDをコピーします。
+6. `supabase_auth_migration.sql` の `owner_id` をそのUUIDへ置き換え、Supabase SQL Editorで実行します。
+7. アプリを再読み込みし、既存データが見えることを確認します。
+8. 確認後、`SUPABASE_SERVICE_ROLE_KEY`をSecretsから削除します。
 
 認証対応版はログインユーザーのJWTとRLSを使い、本人のalbums・tracksだけを取得・変更します。
 
