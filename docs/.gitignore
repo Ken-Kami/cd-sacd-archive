@@ -1,0 +1,4 @@
+/.quarto/
+**/*.quarto_ipynb
+/design-specification.html
+/design-specification_files/

@@ -1,0 +1,671 @@
+---
+title: "わたしの音盤棚 設計仕様書"
+subtitle: "CD・SACDコレクション管理アプリ"
+author: "Kenichiro / Codex"
+date: "2026-08-10"
+lang: ja
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: false
+    theme: cosmo
+    mermaid:
+      theme: neutral
+    embed-resources: false
+execute:
+  enabled: false
+---
+
+::: callout-note
+## 文書の基準
+
+本書は、GitHubリポジトリ `Ken-Kami/cd-sacd-archive` のアプリ版 **0.7.0** を基準とする。対象は、Streamlitで動作する「わたしの音盤棚」と、その認証、永続化層、画像認識・外部メタデータ取得、検索、CSV連携、運用方法である。
+:::
+
+![アプリ利用イメージ：音盤の撮影、メタデータ取得、クラウド保存、検索・評価](assets/cd-archive-overview.png){fig-alt="多数のCDをスマートフォンで撮影し、メタデータをクラウドへ保存して、PCで検索・評価する流れ" width="100%"}
+
+# 文書目的
+
+本書は、現行アプリを安定運用し、障害調査、データ保全、引き継ぎ、将来改修を安全に行うための設計基準を示す。利用者向け操作説明だけでなく、開発者・運用者が「どこに何があり、どの処理がどのデータを変更するか」を判断できることを目的とする。
+
+対象読者は次のとおりである。
+
+- アプリ利用者・コレクション管理者
+- Streamlit CloudおよびSupabaseの運用担当者
+- Pythonコードを保守・改修する開発者
+- CSVを用いてデータ移行・分析を行う担当者
+
+# システム概要
+
+## 目的
+
+国内盤・輸入盤を含む1,000枚以上、将来的には約3,000枚・30,000曲以上のCD/SACDコレクションを、MacおよびiPhoneから一元管理する。
+
+主な価値は次のとおりである。
+
+- バーコード写真やジャケット画像から登録作業を省力化する
+- 盤単位と曲単位の情報を関連付けて保存する
+- ジャケット、規格品番、演者、作曲者、保管場所を横断的に確認する
+- アルバム・曲のお気に入り度を管理する
+- 全曲検索やお気に入り曲抽出からプレイリスト候補を作る
+- Supabaseにデータを永続化し、アプリ更新後も保持する
+
+## システムコンテキスト
+
+```{mermaid}
+flowchart LR
+    U[利用者<br/>Mac / iPhone] -->|HTTPS| ST[Streamlit Cloud<br/>わたしの音盤棚]
+    ST -->|REST / JSON| SB[(Supabase<br/>PostgreSQL)]
+    ST -->|検索・照会| MB[MusicBrainz]
+    ST -->|ジャケット取得| CA[Cover Art Archive]
+    ST -->|任意・検索| DG[Discogs]
+    ST -->|画像解析・Web検索| OA[OpenAI API]
+    U -->|画像アップロード| ST
+    ST -->|CSVダウンロード| U
+    U -->|CSVアップロード| ST
+```
+
+## 技術スタック
+
+| 区分 | 技術 | 役割 |
+|----|----|----|
+| UI・アプリ | Streamlit 1.x | 画面、セッション状態、ファイル入出力 |
+| 言語 | Python 3.9互換 | アプリケーションロジック |
+| 表データ | pandas 2.x | 一覧、編集表、検索結果表示 |
+| モデル検証 | Pydantic 2.x | アルバム・曲・検索結果の構造化 |
+| 画像処理 | Pillow | Exif補正、グレースケール、コントラスト補正 |
+| バーコード | zxing-cpp | JAN/UPC/EAN等の画像認識 |
+| HTTP | requests | 外部API、Supabase REST通信 |
+| AI | OpenAI Python SDK | 画像構造化、最終Web検索 |
+| クラウドDB | Supabase PostgreSQL | 本番データ永続化 |
+| ローカルDB | SQLite | ローカル開発・単体運用 |
+| 配布 | GitHub / Streamlit Cloud | コード管理、自動デプロイ |
+
+# アーキテクチャ
+
+## 論理構成
+
+```{mermaid}
+flowchart TB
+    subgraph Presentation[プレゼンテーション層]
+      APP[app.py]
+      UI1[登録・音盤棚]
+      UI2[アルバム詳細・曲評価]
+      UI3[楽曲検索・お気に入り曲]
+      UI4[CSV・設定]
+      APP --- UI1
+      APP --- UI2
+      APP --- UI3
+      APP --- UI4
+    end
+
+    subgraph Domain[ドメイン・認識層]
+      MOD[media_app/models.py<br/>Pydanticモデル・選択肢]
+      REC[media_app/recognition.py<br/>画像認識・メタデータ検索]
+    end
+
+    subgraph Persistence[永続化層]
+      STO[media_app/storage.py<br/>共通ストレージAPI]
+      SQL[(SQLite)]
+      SUP[(Supabase REST)]
+    end
+
+    APP --> MOD
+    APP --> REC
+    APP --> STO
+    REC --> MOD
+    STO --> MOD
+    STO --> SQL
+    STO --> SUP
+```
+
+## ソース構成
+
+| ファイル | 責務 |
+|------------------------------------|------------------------------------|
+| `app.py` | Streamlit画面、画面遷移、セッション状態、ユースケース制御 |
+| `media_app/auth.py` | Supabase Authのログイン、新規登録、更新、ログアウト |
+| `media_app/models.py` | `AlbumDraft`、`TrackDraft`、`AlbumLookupResult`、固定選択肢 |
+| `media_app/recognition.py` | バーコード認識、AI画像解析、MusicBrainz・Discogs・OpenAI検索、補完 |
+| `media_app/storage.py` | SQLite/Supabase切替、CRUD、曲評価、CSV入出力 |
+| `supabase_schema.sql` | 本番DBテーブル、制約、索引、既存DB向け列追加 |
+| `supabase_auth_migration.sql` | 既存データへの所有者割当とRLS移行 |
+| `tests/test_core.py` | バーコード、モデル補助、SQLite、Supabaseモック、曲、画像URLのテスト |
+| `requirements.txt` | Python依存関係と許容バージョン |
+| `.streamlit/secrets.toml` | 秘密情報。本番・ローカル固有。Git管理対象外 |
+
+## ストレージ切替
+
+`SUPABASE_URL` と `SUPABASE_KEY` の両方が存在する場合はSupabase Authを使用する。Supabase URLが未設定の場合だけSQLiteを使用し、URLのみ設定され公開キーがない場合は安全のため停止する。
+
+```{mermaid}
+flowchart TD
+    A[アプリ起動] --> B{Supabase URLと<br/>Publishable keyがあるか}
+    B -->|両方あり| L[メール＋パスワードでログイン]
+    B -->|Supabase未設定| D[SQLiteを使用]
+    B -->|URLのみ| X[設定エラーで停止]
+    L --> C[ユーザーJWTでSupabase RESTを使用]
+    C --> E[RLS経由でalbums / tracks接続確認]
+    D --> F[DB作成・列マイグレーション]
+    E --> G[画面表示]
+    F --> G
+```
+
+# 機能仕様
+
+## 画面構成
+
+| 画面・タブ | 主要機能 |
+|------------------------------------|------------------------------------|
+| ログイン | メールアドレス・パスワード認証、新規登録、ログアウト |
+| 音盤を登録 | バーコード写真、AI画像、番号入力、手入力、内容確認、重複確認、保存 |
+| 音盤棚 | アルバム横断検索、盤種・出自・ジャンル絞り込み、星・ジャンル一覧編集、CSV、詳細リンク |
+| 楽曲検索 | 全曲横断検索、フレーズ一致、全単語一致、詳細リンク、CSV |
+| お気に入り曲 | 曲評価を複数選択して抽出、プレイリスト候補CSV |
+| 一括登録 | アルバムCSVの読み込み |
+| 設定 | 保存先、Supabase状態、OpenAI・Discogs設定案内 |
+| アルバム詳細 | ジャケット、曲一覧、曲評価、情報再取得、アルバム別曲CSV |
+
+## アルバム登録
+
+### 入力方式
+
+1.  **バーコード写真**：アップロードした写真をZXingで読み取り、段階的メタデータ検索を実行する。
+2.  **ジャケット画像（AI）**：表、裏、帯、盤面を最大4枚程度送信し、印刷情報と曲目を構造化する。
+3.  **番号を入力**：JAN/UPC/EANを検証して段階的検索を実行する。
+4.  **手入力**：全フィールドを利用者が直接入力する。
+
+カメラは常時起動せず、Streamlitのファイル選択UIを利用する。iPhoneではファイル選択時に撮影を選べる。
+
+### 登録シーケンス
+
+```{mermaid}
+sequenceDiagram
+    actor User as 利用者
+    participant UI as Streamlit
+    participant ZX as ZXing / AI画像解析
+    participant Meta as 外部メタデータ検索
+    participant DB as Supabase / SQLite
+
+    User->>UI: 写真・番号・手入力
+    opt 写真
+      UI->>ZX: バーコードまたは画像情報を抽出
+      ZX-->>UI: AlbumDraft / TrackDraft
+    end
+    UI->>Meta: バーコード→規格品番→タイトル＋アーティスト
+    Meta-->>UI: 盤情報・曲目・ジャケット候補
+    UI-->>User: 入力フォームへ反映
+    User->>UI: 内容確認・修正・保存
+    UI->>DB: 重複候補照会
+    alt 重複なし
+      UI->>DB: albums追加
+      UI->>DB: tracks追加
+      DB-->>UI: 保存ID
+    else 重複候補あり
+      UI-->>User: 重複警告
+    end
+```
+
+### 重複検出
+
+- バーコード完全一致
+- 規格品番の大文字小文字を無視した一致
+- どちらも空の場合は重複判定を行わない
+- 重複候補がある場合は警告し、自動統合しない
+
+## メタデータ取得・補完
+
+### 検索優先順位
+
+```{mermaid}
+flowchart TD
+    S[画像・バーコード・既存情報] --> M1{MusicBrainz<br/>バーコード一致}
+    M1 -->|なし| M2{MusicBrainz<br/>規格品番一致}
+    M2 -->|なし| M3{MusicBrainz<br/>タイトル＋アーティスト}
+    M3 -->|なし| D{Discogsトークンあり<br/>版の一致確認}
+    D -->|なし / 未設定| O{OpenAIキーあり<br/>Web検索・一致検証}
+    M1 -->|あり| R[アルバム・曲・ジャケット]
+    M2 -->|あり| R
+    M3 -->|あり| R
+    D -->|あり| R
+    O -->|あり| R
+    O -->|なし| K[入力済み情報を保持]
+```
+
+### 版同定の安全策
+
+- バーコードがある場合は、検索結果のバーコード完全一致を優先する。
+- 規格品番がある場合は、記号・空白・大文字小文字を正規化して一致確認する。
+- タイトル検索は類似度しきい値を使用する。
+- アーティストが双方にある場合は類似度を追加確認する。
+- AI Web検索結果もバーコード、規格品番、タイトルの整合性を再検証する。
+- 一致を確認できない場合は推測で保存せず、入力済み情報を返す。
+
+### 保存済み情報の再取得
+
+アルバム詳細の「アルバム情報・収録曲を再取得して補完」から実行する。
+
+- 既存の非空欄は原則として保持し、空欄だけを補完する。
+- `location`、`purchase_date`、`purchase_price`、`rating`、`condition`、`notes` は外部情報で上書きしない。
+- 既存曲がある場合は曲目を置換しない。
+- 曲目が未登録の場合だけ取得曲を保存する。
+
+## ジャケット画像
+
+- MusicBrainz Release IDを基にCover Art Archiveを照会する。
+- front指定画像を優先し、`large`、`500`、`250`、原画像の順にURLを選ぶ。
+- Discogs検索結果から取得した画像URLも保存可能である。
+- 画像本体はSupabaseへ保存せず、外部URLと取得元を保存する。
+
+## アルバム一覧
+
+- 検索対象：タイトル、原題、アーティスト、作曲家、演者、レーベル、規格品番、バーコード、ジャンル、保管場所、メモ。
+- 絞り込み：盤種、国内盤/輸入盤、ジャンル。
+- 集計：登録タイトル数、総ディスク枚数、SACD系件数。
+- 一覧上で編集できる項目：アルバムお気に入り度、ジャンル。
+- ジャンル選択肢：ポップス、ロック、R&B、ジャズ、クラシック、サウンドトラック、未設定。
+- その他の項目は詳細編集フォームで変更する。
+
+## アルバム・曲のお気に入り度
+
+- 値域は0〜5。
+- 0は未評価、1〜5は星数を表す。
+- アルバム評価は登録フォーム、編集フォーム、音盤棚一覧から変更できる。
+- 曲評価はアルバム詳細の曲一覧から複数件をまとめて保存できる。
+- 外部情報再取得では評価を保持する。
+
+## 全楽曲検索
+
+検索対象は `track_title`、`track_artists`、`performers`、`composers`、`album_title`、`album_artists`、`label`、`catalog_number`、`barcode`、`isrc` である。
+
+検索前に次を正規化する。
+
+- Unicode NFKCによる全角・半角の統一
+- 大文字小文字の無視
+- 連続空白の単一空白化
+- 検索語外側の直線・曲線引用符の除去
+
+検索方式は次の2つである。
+
+| 方式 | 仕様 | 例 |
+|------------------------|------------------------|------------------------|
+| フレーズ一致（既定） | 入力全体が同一フィールド内に同じ順序で連続して存在 | `I feel` は `I Feel Love` に一致 |
+| すべての語を含む | 空白区切りの全語が、検索対象のいずれかに存在。別フィールドでも可 | 作曲者とアルバム名を組み合わせて検索 |
+
+検索結果にはアルバム詳細リンクを付け、全件をCSV出力できる。
+
+## お気に入り曲抽出
+
+- 全アルバムの曲から、1〜5の曲評価を複数選択して抽出する。
+- 初期値は4・5である。
+- 未評価（0）は抽出対象外である。
+- 結果はプレイリスト候補CSVとして出力できる。
+
+## CSV
+
+### アルバムCSV
+
+- `DATA_FIELDS` の全列をUTF-8 CSVとして出力する。
+- ダウンロード時はExcelで開きやすいUTF-8 BOMを付与する。
+- 読み込み時はタイトル必須、人物列はセミコロン区切りとして復元する。
+- 読み込みエラーは行番号付きで最大20件を画面表示する。
+
+### 曲CSV
+
+アルバム情報と曲情報を平坦化して出力する。主な列は次のとおりである。
+
+`album_id`, `album_title`, `album_artists`, `label`, `catalog_number`, `barcode`, `media_type`, `release_year`, `disc_number`, `track_number`, `track_title`, `track_artists`, `performers`, `composers`, `duration`, `duration_ms`, `isrc`, `rating`
+
+# データ設計
+
+## ER図
+
+```{mermaid}
+erDiagram
+    ALBUMS ||--o{ TRACKS : contains
+    ALBUMS {
+      bigint id PK
+      uuid user_id FK
+      text title
+      text title_original
+      text artists
+      text composers
+      text performers
+      text label
+      text catalog_number
+      text barcode
+      text media_type
+      int disc_count
+      text origin
+      text country
+      text release_year
+      text genre
+      text recording_format
+      text location
+      text purchase_date
+      int purchase_price
+      int rating
+      text condition
+      text notes
+      text musicbrainz_release_id
+      text cover_url
+      text cover_source
+      text source
+      timestamptz created_at
+    }
+    TRACKS {
+      bigint id PK
+      uuid user_id FK
+      bigint album_id FK
+      int disc_number
+      text track_number
+      text title
+      text artists
+      text performers
+      text composers
+      int duration_ms
+      text isrc
+      int rating
+    }
+```
+
+## albumsテーブル
+
+| 列 | 型 | 必須・既定 | 意味 |
+|----|----|----|----|
+| id | BIGINT | PK / Identity | アルバムID |
+| user_id | UUID | 必須、auth.users FK | 所有者ユーザーID |
+| title | TEXT | 必須 | アルバム名 |
+| title_original | TEXT | 空文字 | 原題・別タイトル |
+| artists | TEXT | 空文字 | 主要アーティスト。`;`区切り |
+| composers | TEXT | 空文字 | 作曲家。`;`区切り |
+| performers | TEXT | 空文字 | 演者。`;`区切り |
+| label | TEXT | 空文字 | レーベル |
+| catalog_number | TEXT | 空文字 | 規格品番 |
+| barcode | TEXT | 空文字 | 数字のみのJAN/UPC/EAN等 |
+| media_type | TEXT | CD | CD、SACD等 |
+| disc_count | INTEGER | 1、1以上 | ディスク枚数 |
+| origin | TEXT | 不明 | 国内盤、輸入盤、不明 |
+| country | TEXT | 空文字 | 発売国 |
+| release_year | TEXT | 空文字 | 発売年 |
+| genre | TEXT | 空文字 | 選択ジャンル |
+| recording_format | TEXT | 空文字 | Stereo、DSD、5.1ch等 |
+| location | TEXT | 空文字 | 保管場所 |
+| purchase_date | TEXT | 空文字 | 購入日 |
+| purchase_price | INTEGER | NULL可、0以上 | 購入価格（円） |
+| rating | INTEGER | 0、0〜5 | アルバムお気に入り度 |
+| condition | TEXT | 空文字 | 状態、帯など |
+| notes | TEXT | 空文字 | 自由メモ |
+| musicbrainz_release_id | TEXT | 空文字 | MusicBrainz Release ID |
+| cover_url | TEXT | 空文字 | ジャケットURL |
+| cover_source | TEXT | 空文字 | Cover Art Archive等 |
+| source | TEXT | manual | 登録元 |
+| created_at | TIMESTAMPTZ | 現在時刻 | 登録日時 |
+
+## tracksテーブル
+
+| 列           | 型      | 必須・既定    | 意味                    |
+|--------------|---------|---------------|-------------------------|
+| id           | BIGINT  | PK / Identity | 曲ID                    |
+| user_id      | UUID    | 必須、auth.users FK | 所有者ユーザーID     |
+| album_id     | BIGINT  | FK、必須      | 親アルバムID            |
+| disc_number  | INTEGER | 1、1以上      | ディスク番号            |
+| track_number | TEXT    | 空文字        | 表示用曲番号            |
+| title        | TEXT    | 必須          | 曲名                    |
+| artists      | TEXT    | 空文字        | 曲アーティスト          |
+| performers   | TEXT    | 空文字        | 演者・役割              |
+| composers    | TEXT    | 空文字        | 作曲者等                |
+| duration_ms  | INTEGER | NULL可、0以上 | 時間（ミリ秒）          |
+| isrc         | TEXT    | 空文字        | ISRC。複数時は`;`区切り |
+| rating       | INTEGER | 0、0〜5       | 曲お気に入り度          |
+
+親アルバム削除時は `ON DELETE CASCADE` により所属曲も削除する。
+
+## 索引
+
+- `albums.barcode`
+- `albums.catalog_number`
+- `albums.title`
+- `tracks(album_id, disc_number, id)`
+
+# 外部連携仕様
+
+## MusicBrainz
+
+- Release Search APIをバーコード、規格品番、タイトル＋アーティストに使用する。
+- Release Lookup APIで媒体・録音・アーティストクレジット・関連作品を取得する。
+- User-Agentは個人コレクション管理アプリとして明示する。
+- HTTPタイムアウトは概ね15〜20秒である。
+
+## Cover Art Archive
+
+- MusicBrainz Release IDから画像一覧を取得する。
+- 404は「画像なし」として扱い、アプリ全体のエラーにしない。
+- HTTP URLはHTTPSへ置換する。
+
+## Discogs
+
+- `DISCOGS_USER_TOKEN` がある場合のみ使用する。
+- バーコード、規格品番、タイトル＋アーティストの順でRelease候補を検索する。
+- Release詳細から盤情報、曲目、時間、画像を取得する。
+- トークン未設定時は静かにスキップし、他の検索先へ進む。
+
+## OpenAI
+
+用途は次の2つである。
+
+1.  表・裏・帯・盤面画像から `AlbumLookupResult` を構造化する。
+2.  他サービスで見つからない場合にWeb検索で版と曲目を補完する。
+
+画像解析では印刷された情報だけを抽出し、読めない文字を推測しないよう指示する。モデルは `OPENAI_VISION_MODEL` で切替可能で、未指定時はコードの既定値を使用する。
+
+## Supabase Auth / REST
+
+- SecretsのPublishable key（旧anon key）をapikeyとして使用する。
+- メールアドレス・パスワード認証で取得したユーザーJWTをBearer Tokenとして使用する。
+- albums・tracksの`user_id`とRLSにより、ログイン本人の行だけを取得・変更する。
+- 1ページ1,000件で繰り返し取得する。
+- 曲一括追加は500件単位で送信する。
+- 接続失敗は `StorageUnavailableError` に変換し、起動時に設定確認を促して停止する。
+
+# セキュリティ
+
+## 秘密情報
+
+次の値は `.streamlit/secrets.toml` またはStreamlit Cloud Secretsにのみ保存する。
+
+``` toml
+OPENAI_API_KEY = "..."
+OPENAI_VISION_MODEL = "..."
+DISCOGS_USER_TOKEN = "..."
+SUPABASE_URL = "https://...supabase.co"
+SUPABASE_KEY = "Publishable keyまたはanon key"
+```
+
+禁止事項：
+
+- GitHubへキーをコミットしない
+- 画面、ログ、スクリーンショットへキーを表示しない
+- `service_role` / Secret keyはアプリへ設定せず、Publishable keyだけを使用する
+- 漏えい時は対象サービスで直ちに無効化・再発行する
+
+## RLSと権限
+
+Supabaseではalbums・tracksともRLSを有効化し、`auth.uid() = user_id`をSELECT、INSERT、UPDATE、DELETEの条件とする。ログイン前はアプリ本体を表示せず、ログイン後も本人の行以外はSupabaseから返らない。自分のアカウント作成後は、必要に応じてSupabase側で新規サインアップを無効にする。
+
+## 入力・外部データ
+
+- Pydanticで値域と必須条件を検証する。
+- バーコードは数字化し、GTINチェックディジットを検証する。
+- 外部検索結果は一致確認後にのみ採用する。
+- AI出力を確定情報とみなさず、保存前の利用者確認を前提とする。
+
+# 非機能要件
+
+## 規模
+
+- アルバム：約3,000件を想定
+- 曲：約30,000件以上を想定
+- Supabase取得は1,000件ページング、曲登録は500件分割
+- 一覧・検索は現状クライアント側のpandas/Python処理を含む
+
+## 可用性
+
+- Supabaseが利用不能な場合、本番では誤ってSQLiteへ切り替えず、Secretsが両方設定されていれば接続エラーとして停止する。
+- MusicBrainz、Discogs、OpenAIの個別失敗は、可能な範囲で次の検索先へフォールバックする。
+- ジャケット取得失敗はアルバム本体の保存を妨げない。
+
+## データ整合性
+
+- アルバム削除に伴い曲も削除する。
+- 外部補完は利用者固有情報を上書きしない。
+- 既存曲がある場合、再取得で自動置換しない。
+- 評価値はDB制約およびPydanticで0〜5に限定する。
+
+## 操作性
+
+- カメラは利用者がファイル選択を開始した時だけ利用する。
+- 大量編集が必要な星・ジャンルは一覧上で変更できる。
+- 検索方式を明示し、適用条件を結果上部に表示する。
+- CSVはUTF-8 BOM付きでダウンロードする。
+
+# 運用設計
+
+## 本番構成
+
+1.  GitHubの`main`をStreamlit Cloudへ接続する。
+2.  Streamlit Cloud SecretsへURLとPublishable keyを設定する。
+3.  起動画面の「新規登録」から自分のユーザーを作成してログインする。
+4.  設定タブ、または移行前の接続エラー画面に表示されるUUIDを指定して`supabase_auth_migration.sql`を実行する。新規プロジェクトでは`supabase_schema.sql`を実行する。
+5.  再読み込みし、既存アルバム・曲が本人のデータとして表示されることを確認する。
+
+## コード更新とデータ保持
+
+GitHub/Streamlit Cloudの更新対象はアプリコードであり、Supabaseの登録データとは分離される。通常の再デプロイやPRマージではalbums・tracksのデータは消えない。
+
+DB列追加を伴う変更では、次の順序を守る。
+
+1.  SupabaseのバックアップまたはCSV出力を取得する。
+2.  SQL Editorで `ADD COLUMN IF NOT EXISTS` 等の後方互換SQLを実行する。
+3.  アプリのPRをマージする。
+4.  Streamlit Cloudのログと画面を確認する。
+
+## バックアップ
+
+推奨運用：
+
+- 定期的にアルバムCSVと全収録曲CSVをダウンロードする。
+- Supabaseのバックアップ機能・保持期間を契約プランに応じて確認する。
+- CSVとDBバックアップは別の場所へ保管する。
+- 復元テストを定期的に行う。
+
+::: callout-warning
+CSVは可搬性に優れるが、完全なDBバックアップではない。ID、関連、作成日時、将来追加列を含む完全復元にはSupabase側バックアップも併用する。
+:::
+
+## デプロイ確認チェックリスト
+
+- [ ] 必要なSupabase SQLを先に実行した
+- [ ] 既存albums・tracksへ自分のuser_idを割り当てた
+- [ ] Secretsに必要なキーがある
+- [ ] メールアドレス・パスワードでログインできる
+- [ ] GitHub Actionsまたはローカルテストが成功した
+- [ ] アプリが起動する
+- [ ] 既存アルバムが表示される
+- [ ] 新規登録と編集ができる
+- [ ] 曲一覧と評価が表示される
+- [ ] CSVをダウンロードできる
+- [ ] 外部検索失敗時に既存データが失われない
+
+# 障害対応
+
+| 症状 | 主な確認点 | 対応 |
+|------------------------|------------------------|------------------------|
+| アプリが白画面・ImportError | Streamlit Cloudログ、requirements、複数ファイル更新時のキャッシュ | 再起動、依存関係確認、最新版コミット確認 |
+| Supabaseへ接続できない | URL、Publishable key、JWT、テーブル、RLS、ネットワーク | Secrets、Authユーザー、移行SQLを照合 |
+| 保存時に列エラー | アプリ先行更新、DB列未追加 | 該当ALTER TABLEを実行 |
+| バーコードを検出できない | 反射、ピント、傾き、画像内占有率 | 明るい場所でバーコードを大きく撮影 |
+| バーコードは読めるが盤がない | MusicBrainz未登録、版違い | 規格品番・画像・Discogs・AI検索を使用 |
+| 曲が取得できない | Release ID、外部DB曲目欠落 | 裏ジャケット画像、再取得、手動補完を検討 |
+| ジャケットがない | Cover Art Archive未登録 | Discogs画像または将来の手動画像対応 |
+| 検索結果が広すぎる | 「すべての語を含む」選択、短すぎる語 | 「フレーズ一致」を選択 |
+| 検索語が1回遅れる | 古いアプリ版 | 0.6.7以降へ更新 |
+
+# テスト設計
+
+現行自動テストは次を対象とする。
+
+- バーコード正規化・チェックディジット
+- 写真風JPEGからのバーコード認識
+- 人物名の分割・結合
+- ジャンル固定値
+- SQLiteのアルバムCRUDと重複検出
+- 曲保存、評価更新、全曲結合、CSV時間表記
+- Supabase RESTのモックによるアルバム・曲保存
+- Cover Art Archiveのfront/large優先
+- 外部補完時の手入力値・購入情報・評価保護
+
+推奨実行コマンド：
+
+``` bash
+PYTHONPYCACHEPREFIX=/tmp/cd_archive_pycache .venv/bin/python -m pytest -q
+```
+
+追加でStreamlit AppTestにより、起動例外、タブ構成、検索状態の同期を確認する。
+
+# 既知の制約
+
+1.  外部DBに未登録の盤は自動取得できない。
+2.  AI画像解析は画像品質、反射、文字サイズ、費用、モデル仕様に依存する。
+3.  Discogs検索には利用者自身のUser Tokenが必要である。
+4.  ジャケットは外部URL参照であり、提供元の変更・削除の影響を受ける。
+5.  認証セッションはStreamlitのブラウザセッション単位であり、ブラウザを閉じた後は再ログインが必要になる場合がある。
+6.  全曲検索・お気に入り抽出は全曲データを読み込むため、件数増加時に遅延が増える可能性がある。
+7.  CSV一括登録はアルバム中心であり、曲CSVの再インポート機能は持たない。
+8.  楽曲情報の演者・作曲者は外部サービスのクレジット品質に左右される。
+9.  SQLiteは同一ファイルを複数プロセスから同時利用する運用を想定しない。
+
+# 将来拡張候補
+
+優先順位の目安を次に示す。
+
+| 優先度 | 候補 | 目的 |
+|----|----|----|
+| 高 | Supabase側の楽曲全文検索/RPC | 30,000曲超での検索速度改善 |
+| 中 | パスワード再設定UI | 利用者自身による認証復旧手順の改善 |
+| 高 | 監査ログ・変更履歴 | 誤編集・削除からの追跡と復旧 |
+| 中 | 曲CSVインポート | 外部整備した曲情報の再投入 |
+| 中 | 候補選択画面 | 同名盤・再発盤の誤同定低減 |
+| 中 | ジャケットのSupabase Storage保存 | 外部URL切れへの耐性 |
+| 中 | プレイリスト保存 | 抽出結果を名前付きで永続化 |
+| 低 | 再生サービス連携 | Spotify、Apple Music等への候補連携 |
+| 低 | 統計・可視化 | 年代、ジャンル、評価、演者別の分析 |
+
+# 受入基準
+
+現行版を運用可能と判断する最低条件は次のとおりである。
+
+- Supabase接続時に既存アルバム・曲が表示される。
+- 新規アルバムを4方式のいずれかで登録できる。
+- アルバムと曲のお気に入り度を保存できる。
+- 音盤棚の検索・絞り込み・ジャンル編集が機能する。
+- 楽曲検索でフレーズ一致と全単語一致を選択できる。
+- お気に入り曲を評価で抽出しCSV出力できる。
+- アルバム・全曲CSVを出力できる。
+- アプリ更新後もSupabaseデータが保持される。
+- 外部検索が失敗しても、入力済み情報を失わない。
+
+# 変更管理
+
+本書と実装の乖離を防ぐため、次の場合は設計仕様書も同じPRで更新する。
+
+- DBテーブル・列・制約の変更
+- 画面・タブ・主要操作の追加または削除
+- 外部API、検索順序、一致条件の変更
+- Secrets・権限・認証方式の変更
+- CSV列の変更
+- 想定規模や性能方式の変更
+
+文書末尾の基準バージョンと日付を更新し、Mermaid図・データ辞書・運用手順の整合性を確認する。

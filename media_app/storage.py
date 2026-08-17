@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import os
 import sqlite3
+from contextvars import ContextVar
 from contextlib import contextmanager
 from datetime import datetime
 from io import StringIO
@@ -23,6 +24,7 @@ DATA_FIELDS = (
     "source", "created_at",
 )
 TEXT_FIELDS = tuple(field for field in DATA_FIELDS if field not in {"id", "disc_count", "purchase_price", "rating"})
+_AUTH_SESSION: ContextVar[dict | None] = ContextVar("media_auth_session", default=None)
 
 
 class StorageUnavailableError(RuntimeError):
@@ -30,7 +32,20 @@ class StorageUnavailableError(RuntimeError):
 
 
 def using_supabase() -> bool:
-    return bool(os.getenv("SUPABASE_URL", "").strip() and os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip())
+    key = os.getenv("SUPABASE_KEY", "").strip() or os.getenv("SUPABASE_ANON_KEY", "").strip()
+    return bool(os.getenv("SUPABASE_URL", "").strip() and key)
+
+
+def set_auth_session(auth: dict | None) -> None:
+    """現在のStreamlit実行コンテキストへSupabase Authセッションを設定する。"""
+    _AUTH_SESSION.set(auth)
+
+
+def _current_auth() -> dict:
+    auth = _AUTH_SESSION.get()
+    if not auth or not auth.get("access_token") or not auth.get("user_id"):
+        raise StorageUnavailableError("ログインセッションがありません。")
+    return auth
 
 
 def storage_description() -> str:
@@ -39,8 +54,9 @@ def storage_description() -> str:
 
 def _supabase_request(method: str, table: str, *, params=None, json=None, prefer="", headers=None):
     url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
-    request_headers = {"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    key = os.getenv("SUPABASE_KEY", "").strip() or os.getenv("SUPABASE_ANON_KEY", "").strip()
+    auth = _current_auth()
+    request_headers = {"apikey": key, "Authorization": f"Bearer {auth['access_token']}", "Content-Type": "application/json"}
     if prefer:
         request_headers["Prefer"] = prefer
     if headers:
@@ -149,6 +165,7 @@ def add_album(album: AlbumDraft, source: str = "manual", path: Path | None = Non
     record = _record(album, source)
     fields = [field for field in DATA_FIELDS if field != "id"]
     if path is None and using_supabase():
+        record["user_id"] = _current_auth()["user_id"]
         rows = _supabase_request("POST", "albums", json=record, prefer="return=representation").json()
         return int(rows[0]["id"])
     with connect(path) as db:
@@ -218,7 +235,8 @@ def update_album_cover(album_id: int, cover_url: str, cover_source: str, path: P
 def replace_tracks(album_id: int, tracks: list[TrackDraft], path: Path | None = None) -> None:
     if path is None and using_supabase():
         _supabase_request("DELETE", "tracks", params={"album_id": f"eq.{album_id}"}, prefer="return=minimal")
-        records = [dict(item.model_dump(), album_id=album_id) for item in tracks]
+        user_id = _current_auth()["user_id"]
+        records = [dict(item.model_dump(), album_id=album_id, user_id=user_id) for item in tracks]
         for start in range(0, len(records), 500):
             _supabase_request("POST", "tracks", json=records[start:start + 500], prefer="return=minimal")
         return

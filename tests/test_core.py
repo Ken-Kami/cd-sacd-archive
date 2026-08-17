@@ -5,7 +5,7 @@ import zxingcpp
 from PIL import Image
 
 from media_app.models import AlbumDraft, GENRES, TrackDraft, join_people, split_people
-from media_app import recognition, storage
+from media_app import auth, recognition, storage
 from media_app.recognition import barcode_from_image, barcode_is_valid, normalize_barcode
 from media_app.storage import add_album, delete_album, duplicate_candidates, export_tracks_csv, initialize, list_albums, list_all_tracks, list_tracks, replace_tracks, update_album, update_track_ratings
 
@@ -107,12 +107,35 @@ def test_supabase_album_and_tracks(monkeypatch) -> None:
         return Response(list(data))
 
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
-    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "test-key")
+    monkeypatch.setenv("SUPABASE_KEY", "test-publishable-key")
     monkeypatch.setattr(storage.requests, "request", fake_request)
+    storage.set_auth_session({"access_token": "user-jwt", "user_id": "user-uuid"})
     album_id = storage.add_album(AlbumDraft(title="クラウド盤"))
     storage.replace_tracks(album_id, [TrackDraft(title="クラウド曲")])
     assert storage.get_album(album_id)["title"] == "クラウド盤"
+    assert storage.get_album(album_id)["user_id"] == "user-uuid"
     assert storage.list_tracks(album_id)[0]["title"] == "クラウド曲"
+    assert storage.list_tracks(album_id)[0]["user_id"] == "user-uuid"
+
+
+def test_supabase_password_sign_in(monkeypatch) -> None:
+    class Response:
+        ok = True
+        content = b"{}"
+        def json(self):
+            return {
+                "access_token": "access",
+                "refresh_token": "refresh",
+                "expires_at": 9999999999,
+                "user": {"id": "user-id", "email": "owner@example.com"},
+            }
+
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_KEY", "publishable-key")
+    monkeypatch.setattr(auth.requests, "post", lambda *args, **kwargs: Response())
+    session = auth.sign_in("owner@example.com", "password123")
+    assert session["user_id"] == "user-id"
+    assert session["email"] == "owner@example.com"
 
 
 def test_cover_art_prefers_front_large_thumbnail(monkeypatch) -> None:

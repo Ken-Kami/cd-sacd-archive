@@ -24,6 +24,7 @@
 - バーコード／規格品番による重複候補の検出
 - 登録後の全項目編集、削除、CSV入出力
 - 総タイトル数、総ディスク枚数、SACD数を集計
+- Supabase Authのメールアドレス・パスワードでログインし、RLSで本人のデータだけを表示
 
 ## 起動
 
@@ -60,13 +61,25 @@ streamlit run app.py
 
 Streamlit CloudではSQLiteを使わず、Supabase PostgreSQLへ永続保存します。
 
-1. SupabaseのSQL Editorで `supabase_schema.sql` を実行します。
-2. Streamlit Cloudの `App settings > Secrets` に次を設定します。
+新規プロジェクトではSupabaseのSQL Editorで `supabase_schema.sql` を実行します。
+
+既存データがあるプロジェクトでは、データを失わないよう次の順序で移行します。
+
+1. Project SettingsのAPI KeysからPublishable key（旧形式ではanon key）を取得します。
+2. Streamlit Cloudの `App settings > Secrets` へ次を追加します。この時点では旧`SUPABASE_SERVICE_ROLE_KEY`をまだ残します。
 
 ```toml
 SUPABASE_URL = "https://YOUR_PROJECT.supabase.co"
-SUPABASE_SERVICE_ROLE_KEY = "YOUR_SERVICE_ROLE_KEY"
+SUPABASE_KEY = "YOUR_PUBLISHABLE_OR_ANON_KEY"
 ```
 
-`service_role`キーは管理者権限を持ちます。GitHub、ソースコード、画面共有へ載せないでください。
-Secretsに両方の値がある場合はSupabase、ない場合はローカルSQLiteを自動使用します。
+3. 認証対応版をデプロイします。
+4. 起動画面の「新規登録」からメールアドレスとパスワードを登録し、ログインします。
+5. 設定タブ、または移行前の接続エラー画面に表示されるユーザーUUIDをコピーします。
+6. `supabase_auth_migration.sql` の `owner_id` をそのUUIDへ置き換え、Supabase SQL Editorで実行します。
+7. アプリを再読み込みし、既存データが見えることを確認します。
+8. 確認後、`SUPABASE_SERVICE_ROLE_KEY`をSecretsから削除します。
+
+認証対応版はログインユーザーのJWTとRLSを使い、本人のalbums・tracksだけを取得・変更します。
+
+自分のアカウント作成後、第三者の新規登録を止める場合はSupabaseのAuthentication設定で新規サインアップを無効にしてください。ログイン済みユーザーには影響しません。
