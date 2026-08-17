@@ -146,6 +146,8 @@ if "draft_source" not in st.session_state:
     st.session_state.draft_source = "manual"
 if "draft_tracks" not in st.session_state:
     st.session_state.draft_tracks = []
+if "detail_view_nonce" not in st.session_state:
+    st.session_state.detail_view_nonce = 0
 if st.session_state.pop("reset_new_form", False):
     st.session_state.draft = AlbumDraft()
     st.session_state.draft_source = "manual"
@@ -387,12 +389,14 @@ if album_param:
             except Exception as exc:
                 st.error(f"収録曲の取得に失敗しました: {exc}")
     if st.button("← 音盤棚へ戻る", type="primary"):
+        st.session_state.detail_view_nonce += 1
         del st.query_params["album"]
         st.rerun()
     st.stop()
 
 tab_add, tab_shelf, tab_track_search, tab_favorites, tab_import, tab_settings = st.tabs(
-    ["音盤を登録", "音盤棚", "楽曲検索", "お気に入り曲", "一括登録", "設定"]
+    ["音盤を登録", "音盤棚", "楽曲検索", "お気に入り曲", "一括登録", "設定"],
+    default="音盤棚",
 )
 
 with tab_add:
@@ -545,27 +549,14 @@ with tab_shelf:
     m2.metric("総ディスク枚数", sum(int(row.get("disc_count") or 1) for row in filtered))
     m3.metric("SACD系", sum("SACD" in row.get("media_type", "") for row in filtered))
     if filtered:
-        detail_choices = {
-            f"{row['title']}（ID: {row['id']}）": int(row["id"])
-            for row in filtered
-        }
-        detail_col, open_col = st.columns([4, 1])
-        selected_detail = detail_col.selectbox(
-            "個別情報・収録曲を見る",
-            detail_choices,
-            key="shelf_detail_choice",
-        )
-        if open_col.button("詳細を開く", type="primary", width="stretch"):
-            st.query_params["album"] = str(detail_choices[selected_detail])
-            st.rerun()
-
-        display_rows = [dict(row) for row in filtered]
+        display_rows = [dict(row, detail=False) for row in filtered]
         display = pd.DataFrame(display_rows).rename(columns={
             "id": "ID", "title": "アルバム", "artists": "アーティスト", "composers": "作曲家",
             "performers": "演奏者", "label": "レーベル", "catalog_number": "規格品番",
             "barcode": "バーコード", "media_type": "盤種", "disc_count": "枚数", "origin": "国内／輸入",
             "country": "発売国", "release_year": "発売年", "genre": "ジャンル", "location": "保管場所",
             "rating": "お気に入り度",
+            "detail": "詳細",
             "cover_url": "ジャケット",
         })
         rating_options = ["未評価", "★", "★★", "★★★", "★★★★", "★★★★★"]
@@ -578,15 +569,16 @@ with tab_shelf:
             display["ジャンル"] = display["ジャンル"].apply(
                 lambda value: value if value in GENRES else "未設定"
             )
-        preferred = ["ID", "ジャケット", "アルバム", "お気に入り度", "アーティスト", "作曲家", "演奏者", "レーベル", "規格品番", "盤種", "枚数", "国内／輸入", "発売国", "発売年", "ジャンル", "保管場所"]
+        preferred = ["詳細", "ID", "ジャケット", "アルバム", "お気に入り度", "アーティスト", "作曲家", "演奏者", "レーベル", "規格品番", "盤種", "枚数", "国内／輸入", "発売国", "発売年", "ジャンル", "保管場所"]
         shelf_columns = [column for column in preferred if column in display]
-        st.caption("お気に入り度とジャンルのセルは、一覧のまま選択・編集できます。")
+        st.caption("「詳細」を選ぶと同じ画面でアルバム情報を開きます。お気に入り度とジャンルも一覧で編集できます。")
         edited_shelf = st.data_editor(
             display[shelf_columns],
             hide_index=True,
             width="stretch",
-            disabled=[column for column in shelf_columns if column not in {"お気に入り度", "ジャンル"}],
+            disabled=[column for column in shelf_columns if column not in {"詳細", "お気に入り度", "ジャンル"}],
             column_config={
+                "詳細": st.column_config.CheckboxColumn("詳細", help="選択したアルバムの詳細を開く", width="small"),
                 "ジャケット": st.column_config.ImageColumn("ジャケット", width="small"),
                 "お気に入り度": st.column_config.SelectboxColumn(
                     "お気に入り度", options=rating_options, required=True, width="medium"
@@ -595,8 +587,12 @@ with tab_shelf:
                     "ジャンル", options=genre_options, required=True, width="medium"
                 ),
             },
-            key="shelf_rating_editor",
+            key=f"shelf_rating_editor_{st.session_state.detail_view_nonce}",
         )
+        selected_detail_rows = edited_shelf[edited_shelf["詳細"]]
+        if not selected_detail_rows.empty:
+            st.query_params["album"] = str(int(selected_detail_rows.iloc[0]["ID"]))
+            st.rerun()
         if st.button("一覧の変更を保存", type="primary"):
             rows_by_id = {int(row["id"]): row for row in filtered}
             changed = 0
@@ -699,19 +695,6 @@ with tab_track_search:
             st.caption("検索条件: 空白で区切ったすべての語を、全項目から検索")
         st.metric("検索結果", f"{len(matched_tracks):,}曲")
         if matched_tracks:
-            matched_album_choices = {
-                f"{row.get('album_title', '')}（ID: {row.get('album_id')}）": int(row["album_id"])
-                for row in matched_tracks
-            }
-            album_col, detail_col = st.columns([4, 1])
-            selected_album = album_col.selectbox(
-                "検索結果のアルバム詳細",
-                matched_album_choices,
-                key="track_search_album_choice",
-            )
-            if detail_col.button("詳細を開く", key="open_track_search_album", width="stretch"):
-                st.query_params["album"] = str(matched_album_choices[selected_album])
-                st.rerun()
             result_display = pd.DataFrame([
                 {
                     "お気に入り度": "★" * int(row.get("rating") or 0),
@@ -729,11 +712,19 @@ with tab_track_search:
                 }
                 for row in matched_tracks
             ])
-            st.dataframe(
+            st.caption("行をクリックすると、その曲を収録するアルバムの詳細を開きます。")
+            selected_track = st.dataframe(
                 result_display,
                 hide_index=True,
                 width="stretch",
+                on_select="rerun",
+                selection_mode="single-row",
+                key=f"track_search_results_{st.session_state.detail_view_nonce}",
             )
+            if selected_track.selection.rows:
+                selected_index = selected_track.selection.rows[0]
+                st.query_params["album"] = str(int(matched_tracks[selected_index]["album_id"]))
+                st.rerun()
             st.download_button(
                 f"検索結果CSVを書き出す（{len(matched_tracks):,}曲）",
                 export_tracks_csv(matched_tracks).encode("utf-8-sig"),
