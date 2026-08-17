@@ -386,7 +386,9 @@ if album_param:
                     st.warning("MusicBrainzにこの盤の収録曲情報がありませんでした。")
             except Exception as exc:
                 st.error(f"収録曲の取得に失敗しました: {exc}")
-    st.link_button("音盤棚へ戻る", st.context.url)
+    if st.button("← 音盤棚へ戻る", type="primary"):
+        del st.query_params["album"]
+        st.rerun()
     st.stop()
 
 tab_add, tab_shelf, tab_track_search, tab_favorites, tab_import, tab_settings = st.tabs(
@@ -543,14 +545,27 @@ with tab_shelf:
     m2.metric("総ディスク枚数", sum(int(row.get("disc_count") or 1) for row in filtered))
     m3.metric("SACD系", sum("SACD" in row.get("media_type", "") for row in filtered))
     if filtered:
-        display_rows = [dict(row, track_link=f"{st.context.url}?album={row['id']}") for row in filtered]
+        detail_choices = {
+            f"{row['title']}（ID: {row['id']}）": int(row["id"])
+            for row in filtered
+        }
+        detail_col, open_col = st.columns([4, 1])
+        selected_detail = detail_col.selectbox(
+            "個別情報・収録曲を見る",
+            detail_choices,
+            key="shelf_detail_choice",
+        )
+        if open_col.button("詳細を開く", type="primary", width="stretch"):
+            st.query_params["album"] = str(detail_choices[selected_detail])
+            st.rerun()
+
+        display_rows = [dict(row) for row in filtered]
         display = pd.DataFrame(display_rows).rename(columns={
             "id": "ID", "title": "アルバム", "artists": "アーティスト", "composers": "作曲家",
             "performers": "演奏者", "label": "レーベル", "catalog_number": "規格品番",
             "barcode": "バーコード", "media_type": "盤種", "disc_count": "枚数", "origin": "国内／輸入",
             "country": "発売国", "release_year": "発売年", "genre": "ジャンル", "location": "保管場所",
             "rating": "お気に入り度",
-            "track_link": "収録曲",
             "cover_url": "ジャケット",
         })
         rating_options = ["未評価", "★", "★★", "★★★", "★★★★", "★★★★★"]
@@ -563,7 +578,7 @@ with tab_shelf:
             display["ジャンル"] = display["ジャンル"].apply(
                 lambda value: value if value in GENRES else "未設定"
             )
-        preferred = ["ID", "ジャケット", "アルバム", "お気に入り度", "収録曲", "アーティスト", "作曲家", "演奏者", "レーベル", "規格品番", "盤種", "枚数", "国内／輸入", "発売国", "発売年", "ジャンル", "保管場所"]
+        preferred = ["ID", "ジャケット", "アルバム", "お気に入り度", "アーティスト", "作曲家", "演奏者", "レーベル", "規格品番", "盤種", "枚数", "国内／輸入", "発売国", "発売年", "ジャンル", "保管場所"]
         shelf_columns = [column for column in preferred if column in display]
         st.caption("お気に入り度とジャンルのセルは、一覧のまま選択・編集できます。")
         edited_shelf = st.data_editor(
@@ -572,7 +587,6 @@ with tab_shelf:
             width="stretch",
             disabled=[column for column in shelf_columns if column not in {"お気に入り度", "ジャンル"}],
             column_config={
-                "収録曲": st.column_config.LinkColumn("収録曲", display_text="別タブで見る"),
                 "ジャケット": st.column_config.ImageColumn("ジャケット", width="small"),
                 "お気に入り度": st.column_config.SelectboxColumn(
                     "お気に入り度", options=rating_options, required=True, width="medium"
@@ -685,11 +699,23 @@ with tab_track_search:
             st.caption("検索条件: 空白で区切ったすべての語を、全項目から検索")
         st.metric("検索結果", f"{len(matched_tracks):,}曲")
         if matched_tracks:
+            matched_album_choices = {
+                f"{row.get('album_title', '')}（ID: {row.get('album_id')}）": int(row["album_id"])
+                for row in matched_tracks
+            }
+            album_col, detail_col = st.columns([4, 1])
+            selected_album = album_col.selectbox(
+                "検索結果のアルバム詳細",
+                matched_album_choices,
+                key="track_search_album_choice",
+            )
+            if detail_col.button("詳細を開く", key="open_track_search_album", width="stretch"):
+                st.query_params["album"] = str(matched_album_choices[selected_album])
+                st.rerun()
             result_display = pd.DataFrame([
                 {
                     "お気に入り度": "★" * int(row.get("rating") or 0),
                     "アルバム": row.get("album_title", ""),
-                    "収録曲": f"{st.context.url}?album={row.get('album_id')}",
                     "Disc": row.get("disc_number", 1),
                     "No.": row.get("track_number", ""),
                     "曲名": row.get("track_title", ""),
@@ -707,9 +733,6 @@ with tab_track_search:
                 result_display,
                 hide_index=True,
                 width="stretch",
-                column_config={
-                    "収録曲": st.column_config.LinkColumn("アルバム詳細", display_text="開く"),
-                },
             )
             st.download_button(
                 f"検索結果CSVを書き出す（{len(matched_tracks):,}曲）",
