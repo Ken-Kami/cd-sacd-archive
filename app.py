@@ -576,6 +576,7 @@ with tab_shelf:
             display[shelf_columns],
             hide_index=True,
             width="stretch",
+            height=600,
             disabled=[column for column in shelf_columns if column not in {"詳細", "お気に入り度", "ジャンル"}],
             column_config={
                 "詳細": st.column_config.CheckboxColumn("詳細", help="選択したアルバムの詳細を開く", width="small"),
